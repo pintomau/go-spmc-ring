@@ -1,0 +1,26 @@
+name: Nightly thorough simulation
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 02:00 UTC nightly
+  workflow_dispatch:        # manual trigger (e.g. before a release)
+    inputs:
+      checks:
+        description: 'Number of rapid cases per test'
+        default: '5000'
+        required: false
+
+jobs:
+  simulation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RAPID_CHECKS: ${{ github.event.inputs.checks || '5000' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run simulation tests
+        run: go test -v -run 'TestRingBuffer_Simulation|TestBitmapReaderPool_Simulation' -timeout 50m .
