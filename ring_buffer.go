@@ -37,7 +37,8 @@ type RingBuffer[T any] struct {
 	writerWaitStrategy       WaitStrategy       // 1 byte + 7 bytes implicit padding to align bufferSize
 	bufferSize               int64              // 8 bytes
 	mask                     int64              // 8 bytes
-	_                        [CacheLineSize - 24 - 1 - 7 - 8 - 8]byte
+	gatingBarrier            WriterBarrier      // 16 bytes; defaults to &barrier; override for pipeline leaf stage
+	_                        [CacheLineSize - 24 - 1 - 7 - 8 - 8 - 16]byte
 
 	buffer []T
 
@@ -95,6 +96,7 @@ func NewRingBuffer[T any](ctx context.Context, capacity int64, opts ...RingBuffe
 	r.barrier.mask = r.mask
 	r.barrier.rootCtx, r.barrier.rootCancel = context.WithCancel(ctx)
 	r.barrier.writerCursor = &r.writeCursor
+	r.gatingBarrier = &r.barrier
 
 	// initialize all cursors to writer position
 	writerPos := r.barrier.writerCursor.Load()
@@ -119,7 +121,7 @@ func (r *RingBuffer[T]) Publish(payload T) {
 	var spins uint64
 	for nextSequence >= r.cachedSlowestReader+r.bufferSize {
 		wait(r.writerWaitStrategy, &r.writerWaitStrategyParams, spins)
-		r.cachedSlowestReader = r.barrier.Load()
+		r.cachedSlowestReader = r.gatingBarrier.Load()
 		spins++
 	}
 	r.buffer[nextSequence&r.mask] = payload
@@ -141,7 +143,7 @@ func (r *RingBuffer[T]) PublishFunc(f func(*T)) {
 	var spins uint64
 	for nextSequence >= r.cachedSlowestReader+r.bufferSize {
 		wait(r.writerWaitStrategy, &r.writerWaitStrategyParams, spins)
-		r.cachedSlowestReader = r.barrier.Load()
+		r.cachedSlowestReader = r.gatingBarrier.Load()
 		spins++
 	}
 	f(&r.buffer[nextSequence&r.mask])
@@ -169,7 +171,7 @@ func (r *RingBuffer[T]) Reserve(n int64) (seg1, seg2 []T, claim int64) {
 		var spins uint64
 		for lastSeq >= r.cachedSlowestReader+r.bufferSize {
 			wait(r.writerWaitStrategy, &r.writerWaitStrategyParams, spins)
-			r.cachedSlowestReader = r.barrier.Load()
+			r.cachedSlowestReader = r.gatingBarrier.Load()
 			spins++
 		}
 	}

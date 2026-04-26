@@ -34,11 +34,11 @@ type BitmapReaderPool[T any] struct {
 	_           [CacheLineSize - 16 - 8 - 8 - 8 - 8]byte // prevent false sharing
 
 	// # Cache line 1: Allocation Metadata (cold path. add/remove operations)
-	buffer         []T                                   // 24 bytes
-	allocatedSlots [2]atomic.Uint64                      // 16 bytes - slot allocation bitmap
-	writerCursor   *atomic.Int64                         // 8 bytes - writer position reference
-	mask           int64                                 // 8 bytes
-	_              [CacheLineSize - 24 - 16 - 8 - 8]byte // prevent false sharing
+	buffer         []T                                    // 24 bytes
+	allocatedSlots [2]atomic.Uint64                       // 16 bytes - slot allocation bitmap
+	writerCursor   WriterBarrier                          // 16 bytes - upstream barrier (*atomic.Int64 or upstream pool)
+	mask           int64                                  // 8 bytes
+	_              [CacheLineSize - 24 - 16 - 16 - 8]byte // prevent false sharing
 
 	// # Cache lines 2-129: Reader Cursors (each gets own cache line)
 	// Each cursor padded to CacheLineSize to prevent false sharing between readers
@@ -65,7 +65,7 @@ type BitmapReaderPool[T any] struct {
 	wg         sync.WaitGroup     // Wait for internal goroutines
 }
 
-func NewBitmapReaderPool[T any](ctx context.Context, writerCursor *atomic.Int64) *BitmapReaderPool[T] {
+func NewBitmapReaderPool[T any](ctx context.Context, writerCursor WriterBarrier) *BitmapReaderPool[T] {
 	b := &BitmapReaderPool[T]{}
 
 	// initialize all cursors to writer position
@@ -430,6 +430,68 @@ func (b *BitmapReaderPool[T]) scanAll(bitmap0 uint64, bitmap1 uint64) int64 {
 	b.lastBitmap1 = bitmap1
 
 	return minA
+}
+
+// scanAllStateless finds the minimum cursor across active slots without touching any
+// cached fields. Safe to call concurrently from multiple goroutines (e.g. downstream
+// pipeline stages whose readers all call LoadWriterBarrier simultaneously).
+func (b *BitmapReaderPool[T]) scanAllStateless(bitmap0, bitmap1 uint64) int64 {
+	maxPosition := b.writerCursor.Load()
+	minA, minB := maxPosition, maxPosition
+
+	tmpMap := bitmap0
+	for tmpMap != 0 {
+		slotIdA := bits.TrailingZeros64(tmpMap)
+		tmpMap &= tmpMap - 1
+		if v := b.slots[slotIdA].cursor.Load(); v < minA {
+			minA = v
+		}
+		if tmpMap == 0 {
+			break
+		}
+		slotIdB := bits.TrailingZeros64(tmpMap)
+		tmpMap &= tmpMap - 1
+		if v := b.slots[slotIdB].cursor.Load(); v < minB {
+			minB = v
+		}
+	}
+
+	tmpMap = bitmap1
+	for tmpMap != 0 {
+		slotIdA := bits.TrailingZeros64(tmpMap) + 64
+		tmpMap &= tmpMap - 1
+		if v := b.slots[slotIdA].cursor.Load(); v < minA {
+			minA = v
+		}
+		if tmpMap == 0 {
+			break
+		}
+		slotIdB := bits.TrailingZeros64(tmpMap) + 64
+		tmpMap &= tmpMap - 1
+		if v := b.slots[slotIdB].cursor.Load(); v < minB {
+			minB = v
+		}
+	}
+
+	if minB < minA {
+		return minB
+	}
+	return minA
+}
+
+// poolBarrier is a thread-safe, stateless view of a BitmapReaderPool's minimum cursor.
+// Unlike Load(), it writes no cached fields and is safe for concurrent callers
+// (e.g. multiple readers in a downstream pipeline stage).
+type poolBarrier[T any] struct{ pool *BitmapReaderPool[T] }
+
+func (p *poolBarrier[T]) Load() int64 {
+	b0 := p.pool.activeSlots[0].Load()
+	b1 := p.pool.activeSlots[1].Load()
+	if b0 == 0 && b1 == 0 {
+		// empty stage: propagate upstream position unchanged
+		return p.pool.writerCursor.Load()
+	}
+	return p.pool.scanAllStateless(b0, b1)
 }
 
 // Shutdown stops all internal goroutines and waits for them to exit.
