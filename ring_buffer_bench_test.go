@@ -78,7 +78,7 @@ func BenchmarkRingBuffer_Publish_NoReaders(b *testing.B) {
 }
 
 func BenchmarkRingBuffer_Publish_MultiReader(b *testing.B) {
-	readerCounts := []int{1, 2, 4, 8}
+	readerCounts := []int{1, 2, 4, 8, 16, 32, 64, 128}
 
 	for _, readers := range readerCounts {
 		b.Run(fmt.Sprintf("readers=%d", readers), func(b *testing.B) {

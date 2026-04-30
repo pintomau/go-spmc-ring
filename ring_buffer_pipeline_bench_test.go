@@ -1,57 +1,16 @@
 package ringring
 
-// Run pipeline benchmarks without the simulation test suite:
-//
-//	go test -bench=BenchmarkPipeline -run=^$ -benchtime=3s ./...
-//
-// For statistical comparison with benchstat:
-//
-//	go test -bench=BenchmarkPipeline -run=^$ -benchtime=3s -count=10 ./... | tee out.txt
-//	benchstat out.txt
-
 import (
 	"context"
 	"fmt"
-	"runtime"
-	"sync/atomic"
 	"testing"
-	"time"
 )
 
-// pipelineReader is a fast drain reader for pipeline benchmarks. It uses a short
-// sleep only when truly idle so it doesn't dominate CPU and stall downstream stages.
-func pipelineReader(ctx context.Context, rv ReadView[object], cur *atomic.Int64) {
-	current := cur.Load()
-	var spins int
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		if w := rv.LoadWriterBarrier(); current < w {
-			for seq := current + 1; seq <= w; seq++ {
-				obj = rv.Get(seq)
-			}
-			cur.Store(w)
-			current = w
-			spins = 0
-		} else {
-			spins++
-			if spins > 200 {
-				time.Sleep(time.Microsecond)
-				spins = 0
-			} else {
-				runtime.Gosched()
-			}
-		}
-	}
-}
-
-// BenchmarkPipeline_1Stage is the pre-pipeline baseline. Readers use pipelineReader
-// (same as pipeline stages) so the comparison is apples-to-apples.
-func BenchmarkPipeline_1Stage(b *testing.B) {
-	for _, readers := range []int{1, 2, 4} {
+// BenchmarkPipeline_1Stage_NoPipeline is the direct-registration baseline. It
+// uses keepUpReader rather than pipelineReader so it stays comparable to the
+// core ring-buffer publish benchmarks in ring_buffer_bench_test.go.
+func BenchmarkPipeline_1Stage_NoPipeline(b *testing.B) {
+	for _, readers := range []int{1, 2, 4, 8, 16, 32, 64, 128} {
 		b.Run(fmt.Sprintf("readers=%d", readers), func(b *testing.B) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -62,12 +21,11 @@ func BenchmarkPipeline_1Stage(b *testing.B) {
 			}
 
 			for range readers {
-				if _, err := rb.barrier.AddReader(pipelineReader); err != nil {
+				if _, err := rb.barrier.AddReader(keepUpReader); err != nil {
 					b.Fatal(err)
 				}
 			}
 
-			b.ResetTimer()
 			for b.Loop() {
 				rb.PublishFunc(produce)
 			}
@@ -75,9 +33,9 @@ func BenchmarkPipeline_1Stage(b *testing.B) {
 	}
 }
 
-// BenchmarkPipeline_1Stage_Approach2 uses the Approach 2 API with a single stage.
-func BenchmarkPipeline_1Stage_Approach2(b *testing.B) {
-	for _, readers := range []int{1, 2, 4} {
+// BenchmarkPipeline_1Stage measures the single-stage Stage[T] API path.
+func BenchmarkPipeline_1Stage(b *testing.B) {
+	for _, readers := range []int{1, 2, 4, 8, 16, 32, 64, 128} {
 		b.Run(fmt.Sprintf("readers=%d", readers), func(b *testing.B) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -91,12 +49,11 @@ func BenchmarkPipeline_1Stage_Approach2(b *testing.B) {
 			rb.SetGatingStage(s1)
 
 			for range readers {
-				if _, err := s1.AddReader(pipelineReader); err != nil {
+				if _, err := s1.AddReader(keepUpReader); err != nil {
 					b.Fatal(err)
 				}
 			}
 
-			b.ResetTimer()
 			for b.Loop() {
 				rb.PublishFunc(produce)
 			}
@@ -104,10 +61,10 @@ func BenchmarkPipeline_1Stage_Approach2(b *testing.B) {
 	}
 }
 
-// BenchmarkPipeline_2Stage_Approach2 exercises the explicit Stage[T] path:
+// BenchmarkPipeline_2Stage exercises the explicit Stage[T] path:
 // NewStage + Barrier() + SetGatingStage.
-func BenchmarkPipeline_2Stage_Approach2(b *testing.B) {
-	for _, readers := range []int{1, 2, 4} {
+func BenchmarkPipeline_2Stage(b *testing.B) {
+	for _, readers := range []int{1, 2, 4, 8, 16, 32, 64, 128} {
 		b.Run(fmt.Sprintf("readers=%d", readers), func(b *testing.B) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -122,15 +79,14 @@ func BenchmarkPipeline_2Stage_Approach2(b *testing.B) {
 			rb.SetGatingStage(s2)
 
 			for range readers {
-				if _, err := s1.AddReader(pipelineReader); err != nil {
+				if _, err := s1.AddReader(keepUpReader); err != nil {
 					b.Fatal(err)
 				}
-				if _, err := s2.AddReader(pipelineReader); err != nil {
+				if _, err := s2.AddReader(keepUpReader); err != nil {
 					b.Fatal(err)
 				}
 			}
 
-			b.ResetTimer()
 			for b.Loop() {
 				rb.PublishFunc(produce)
 			}
@@ -138,9 +94,9 @@ func BenchmarkPipeline_2Stage_Approach2(b *testing.B) {
 	}
 }
 
-// BenchmarkPipeline_3Stage_Approach2 shows how overhead scales with pipeline depth.
-func BenchmarkPipeline_3Stage_Approach2(b *testing.B) {
-	for _, readers := range []int{1, 2, 4} {
+// BenchmarkPipeline_3Stage shows how overhead scales with pipeline depth.
+func BenchmarkPipeline_3Stage(b *testing.B) {
+	for _, readers := range []int{1, 2, 4, 8, 16, 32, 64, 128} {
 		b.Run(fmt.Sprintf("readers=%d", readers), func(b *testing.B) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -156,18 +112,17 @@ func BenchmarkPipeline_3Stage_Approach2(b *testing.B) {
 			rb.SetGatingStage(s3)
 
 			for range readers {
-				if _, err := s1.AddReader(pipelineReader); err != nil {
+				if _, err := s1.AddReader(keepUpReader); err != nil {
 					b.Fatal(err)
 				}
-				if _, err := s2.AddReader(pipelineReader); err != nil {
+				if _, err := s2.AddReader(keepUpReader); err != nil {
 					b.Fatal(err)
 				}
-				if _, err := s3.AddReader(pipelineReader); err != nil {
+				if _, err := s3.AddReader(keepUpReader); err != nil {
 					b.Fatal(err)
 				}
 			}
 
-			b.ResetTimer()
 			for b.Loop() {
 				rb.PublishFunc(produce)
 			}

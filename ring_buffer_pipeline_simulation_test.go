@@ -47,12 +47,9 @@ func TestPipeline_Simulation(t *testing.T) {
 			}
 
 			stages := make([]*Stage[int], numStages)
-			for i := range numStages {
-				if i == 0 {
-					stages[i] = rb.NewStage(nil)
-				} else {
-					stages[i] = rb.NewStage(stages[i-1].Barrier())
-				}
+			stages[0] = rb.NewStage(nil)
+			for i := 1; i < numStages; i++ {
+				stages[i] = rb.NewStage(stages[i-1].Barrier())
 			}
 			rb.SetGatingStage(stages[numStages-1])
 
