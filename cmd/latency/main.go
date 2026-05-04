@@ -93,6 +93,8 @@ func parseShape(s string, rate, burstSize, burstIdleMs, heteroSleepUs int) laten
 	switch s {
 	case "burst":
 		return latencytest.Burst{BurstSize: burstSize, IdleMs: burstIdleMs}
+	case "burst-reserve":
+		return latencytest.BurstReserve{BurstSize: burstSize, IdleMs: burstIdleMs}
 	case "hetero":
 		return latencytest.Hetero{RateHz: rate, SleepPerEvent: time.Duration(heteroSleepUs) * time.Microsecond}
 	default:

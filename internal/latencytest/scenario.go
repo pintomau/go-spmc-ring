@@ -29,6 +29,17 @@ func (b Burst) run(ctx context.Context, rb *ringring.RingBuffer[Payload]) {
 	BurstProducer{BurstSize: b.BurstSize, IdleMs: b.IdleMs}.Run(ctx, rb)
 }
 
+// BurstReserve is like Burst but uses Reserve+Commit: the entire batch becomes
+// visible atomically. BurstSize must be < BufferSize (default 131072).
+type BurstReserve struct {
+	BurstSize int
+	IdleMs    int
+}
+
+func (b BurstReserve) run(ctx context.Context, rb *ringring.RingBuffer[Payload]) {
+	BurstReserveProducer{BurstSize: b.BurstSize, IdleMs: b.IdleMs}.Run(ctx, rb)
+}
+
 // Hetero scenario: one fast SpinReader + one slow reader with SleepPerEvent.
 // The Readers field is always treated as 2.
 type Hetero struct {

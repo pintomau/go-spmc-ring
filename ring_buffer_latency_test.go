@@ -55,6 +55,21 @@ func TestLatency_Burst_SingleReader(t *testing.T) {
 	result.LogPercentileTable(t)
 }
 
+func TestLatency_BurstReserve_SingleReader(t *testing.T) {
+	if testing.Short() {
+		t.Skip("latency tests skipped in short mode")
+	}
+	result := latencytest.Run(latencytest.Scenario{
+		Shape:      latencytest.BurstReserve{BurstSize: 1000, IdleMs: 5},
+		WriterWait: ringring.WaitStrategyYield,
+		Polling:    latencytest.SpinReader,
+		Readers:    1,
+		Duration:   10 * time.Second,
+	})
+	result.AssertP99Under(t, 200*time.Millisecond)
+	result.LogPercentileTable(t)
+}
+
 func TestLatency_Hetero_SlowReader(t *testing.T) {
 	if testing.Short() {
 		t.Skip("latency tests skipped in short mode")
