@@ -57,6 +57,7 @@ func makeConsumerFn(rec *LatencyRecorder, polling ReaderPolling, sleepPerEvent t
 					consumedAt := time.Now().UnixNano()
 					rec.RecordConsume(*p, consumedAt)
 					if sleepPerEvent > 0 {
+						cur.Store(seq) // advance per-event so the writer isn't gated for the full batch
 						time.Sleep(sleepPerEvent)
 					}
 				}
