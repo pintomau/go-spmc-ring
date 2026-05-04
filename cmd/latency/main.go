@@ -84,6 +84,8 @@ func parsePolling(s string) latencytest.ReaderPolling {
 		return latencytest.YieldReader
 	case "sleep":
 		return latencytest.SleepReader
+	case "batch":
+		return latencytest.BatchReader
 	default:
 		return latencytest.SpinReader
 	}

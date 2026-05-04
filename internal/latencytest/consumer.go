@@ -16,6 +16,7 @@ const (
 	SpinReader  ReaderPolling = iota // pure busy-spin
 	YieldReader                      // runtime.Gosched() each miss
 	SleepReader                      // time.Sleep(1µs) each miss
+	BatchReader                      // GetRange per batch; single time.Now() per batch
 )
 
 func (r ReaderPolling) String() string {
@@ -26,6 +27,8 @@ func (r ReaderPolling) String() string {
 		return "Yield"
 	case SleepReader:
 		return "Sleep"
+	case BatchReader:
+		return "Batch"
 	default:
 		return "Unknown"
 	}
@@ -35,6 +38,9 @@ func (r ReaderPolling) String() string {
 // sleepPerEvent is added after each event for SleepReader / Hetero scenarios
 // (pass 0 for normal consumers).
 func makeConsumerFn(rec *LatencyRecorder, polling ReaderPolling, sleepPerEvent time.Duration) ringring.ReaderFunc[Payload] {
+	if polling == BatchReader {
+		return makeBatchConsumerFn(rec)
+	}
 	return func(ctx context.Context, rv ringring.ReadView[Payload], cur *atomic.Int64) {
 		expected := cur.Load() + 1
 		for {
@@ -60,6 +66,36 @@ func makeConsumerFn(rec *LatencyRecorder, polling ReaderPolling, sleepPerEvent t
 						cur.Store(seq) // advance per-event so the writer isn't gated for the full batch
 						time.Sleep(sleepPerEvent)
 					}
+				}
+				cur.Store(w)
+				expected = w + 1
+			}
+		}
+	}
+}
+
+// makeBatchConsumerFn returns a ReaderFunc that reads each available batch with
+// rv.GetRange and stamps all events in the batch with a single time.Now() call.
+// For contiguous batches (the common case) GetRange returns a direct slice into
+// the ring buffer with no allocation. All events in a batch share the same
+// consumedAt, so per-event intra-batch latency is not visible.
+func makeBatchConsumerFn(rec *LatencyRecorder) ringring.ReaderFunc[Payload] {
+	return func(ctx context.Context, rv ringring.ReadView[Payload], cur *atomic.Int64) {
+		mask := rv.GetMask()
+		expected := cur.Load() + 1
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				w := rv.LoadWriterBarrier()
+				if expected > w {
+					continue
+				}
+				batch := rv.GetRange(expected&mask, w&mask)
+				consumedAt := time.Now().UnixNano()
+				for i := range batch {
+					rec.RecordConsume(batch[i], consumedAt)
 				}
 				cur.Store(w)
 				expected = w + 1

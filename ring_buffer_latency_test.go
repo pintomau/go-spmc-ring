@@ -70,6 +70,36 @@ func TestLatency_BurstReserve_SingleReader(t *testing.T) {
 	result.LogPercentileTable(t)
 }
 
+func TestLatency_FixedRate_BatchReader(t *testing.T) {
+	if testing.Short() {
+		t.Skip("latency tests skipped in short mode")
+	}
+	result := latencytest.Run(latencytest.Scenario{
+		Shape:      latencytest.FixedRate{RateHz: 500_000},
+		WriterWait: ringring.WaitStrategyYield,
+		Polling:    latencytest.BatchReader,
+		Readers:    1,
+		Duration:   10 * time.Second,
+	})
+	result.AssertP99Under(t, 50*time.Millisecond)
+	result.LogPercentileTable(t)
+}
+
+func TestLatency_BurstReserve_BatchReader(t *testing.T) {
+	if testing.Short() {
+		t.Skip("latency tests skipped in short mode")
+	}
+	result := latencytest.Run(latencytest.Scenario{
+		Shape:      latencytest.BurstReserve{BurstSize: 1000, IdleMs: 5},
+		WriterWait: ringring.WaitStrategyYield,
+		Polling:    latencytest.BatchReader,
+		Readers:    1,
+		Duration:   10 * time.Second,
+	})
+	result.AssertP99Under(t, 200*time.Millisecond)
+	result.LogPercentileTable(t)
+}
+
 func TestLatency_Hetero_SlowReader(t *testing.T) {
 	if testing.Short() {
 		t.Skip("latency tests skipped in short mode")
