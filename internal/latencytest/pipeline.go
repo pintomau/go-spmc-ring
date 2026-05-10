@@ -2,11 +2,12 @@ package latencytest
 
 import (
 	"context"
+	"runtime"
 	"sync/atomic"
 	"time"
 
-	"github.com/pintomau/ringring"
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
+	"github.com/pintomau/ringring"
 )
 
 // PipelineScenario wires a multi-stage pipeline and measures per-stage latency
@@ -28,11 +29,6 @@ type PipelineResult struct {
 	Result
 	// StageToStage[i] is the latency from stage i to stage i+1 (0-indexed).
 	StageToStage []*hdrhistogram.Histogram
-}
-
-// AssertP99Under checks the end-to-end p99 ceiling (delegates to Result).
-func (r PipelineResult) AssertP99Under(t interface{ Helper(); Errorf(string, ...any) }, ceiling time.Duration) {
-	r.Result.AssertP99Under(nil, ceiling)
 }
 
 // RunPipeline executes a multi-stage pipeline scenario.
@@ -93,36 +89,12 @@ func RunPipeline(s PipelineScenario) PipelineResult {
 				rec = lastRecs[ri]
 			}
 
-			fn := ringring.ReaderFunc[Payload](func(ctx context.Context, rv ringring.ReadView[Payload], cur *atomic.Int64) {
-				expected := cur.Load() + 1
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-						w := rv.LoadWriterBarrier()
-						if expected > w {
-							switch s.Polling {
-							case YieldReader:
-								// runtime.Gosched() — import via consumer.go not visible here, inline
-							case SleepReader:
-								time.Sleep(time.Microsecond)
-							}
-							continue
-						}
-						now := time.Now().UnixNano()
-						for seq := expected; seq <= w; seq++ {
-							tsArray[seq&(bufCap-1)].Store(now)
-							if rec != nil {
-								p := rv.Get(seq)
-								rec.RecordConsume(*p, now)
-							}
-						}
-						cur.Store(w)
-						expected = w + 1
-					}
-				}
-			})
+			var fn ringring.ReaderFunc[Payload]
+			if s.Polling == BatchReader {
+				fn = makePipelineBatchReaderFn(tsArray, bufCap, rec)
+			} else {
+				fn = makePipelinePerEventReaderFn(s.Polling, tsArray, bufCap, rec)
+			}
 			if _, err := st.AddReader(fn); err != nil {
 				panic(err)
 			}
@@ -153,5 +125,82 @@ func RunPipeline(s PipelineScenario) PipelineResult {
 	return PipelineResult{
 		Result:       buildResult(lastRecs),
 		StageToStage: stageToStage,
+	}
+}
+
+// makePipelineBatchReaderFn returns a ReaderFunc that uses GetRange for batch
+// reads, mirroring makeBatchConsumerFn but additionally writing per-slot
+// timestamps into tsArray for inter-stage latency measurement.
+func makePipelineBatchReaderFn(
+	tsArray []atomic.Int64,
+	bufCap int64,
+	rec *LatencyRecorder,
+) ringring.ReaderFunc[Payload] {
+	return func(ctx context.Context, rv ringring.ReadView[Payload], cur *atomic.Int64) {
+		mask := rv.GetMask()
+		expected := cur.Load() + 1
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				w := rv.LoadWriterBarrier()
+				if expected > w {
+					// spin only — no Gosched or Sleep backoff
+					continue
+				}
+				batch := rv.GetRange(expected&mask, w&mask)
+				now := time.Now().UnixNano()
+				for i := range batch {
+					tsArray[(expected+int64(i))&(bufCap-1)].Store(now)
+					if rec != nil {
+						rec.RecordConsume(batch[i], now)
+					}
+				}
+				cur.Store(w)
+				expected = w + 1
+			}
+		}
+	}
+}
+
+// makePipelinePerEventReaderFn returns a ReaderFunc that processes events
+// one-by-one with the given polling strategy (Spin/Yield/Sleep).
+func makePipelinePerEventReaderFn(
+	polling ReaderPolling,
+	tsArray []atomic.Int64,
+	bufCap int64,
+	rec *LatencyRecorder,
+) ringring.ReaderFunc[Payload] {
+	return func(ctx context.Context, rv ringring.ReadView[Payload], cur *atomic.Int64) {
+		expected := cur.Load() + 1
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				w := rv.LoadWriterBarrier()
+				if expected > w {
+					switch polling {
+					case YieldReader:
+						runtime.Gosched()
+					case SleepReader:
+						time.Sleep(time.Microsecond)
+					default:
+					}
+					continue
+				}
+				now := time.Now().UnixNano()
+				for seq := expected; seq <= w; seq++ {
+					tsArray[seq&(bufCap-1)].Store(now)
+					if rec != nil {
+						p := rv.Get(seq)
+						rec.RecordConsume(*p, now)
+					}
+				}
+				cur.Store(w)
+				expected = w + 1
+			}
+		}
 	}
 }

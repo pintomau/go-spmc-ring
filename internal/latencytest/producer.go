@@ -41,16 +41,6 @@ type BurstProducer struct {
 	IdleMs    int
 }
 
-// BurstReserveProducer is like BurstProducer but uses Reserve+Commit so the
-// entire burst becomes visible to readers in a single atomic writeCursor.Store.
-// All slots in the batch share the same EnqueuedAt (burst start) and
-// PublishedAt (just before Commit, after any stall in Reserve resolves).
-// BurstSize must be < BufferSize.
-type BurstReserveProducer struct {
-	BurstSize int
-	IdleMs    int
-}
-
 func (p BurstProducer) Run(ctx context.Context, rb *ringring.RingBuffer[Payload]) {
 	idle := time.Duration(p.IdleMs) * time.Millisecond
 	var seq int64
@@ -82,6 +72,16 @@ func (p BurstProducer) Run(ctx context.Context, rb *ringring.RingBuffer[Payload]
 		case <-time.After(idle):
 		}
 	}
+}
+
+// BurstReserveProducer is like BurstProducer but uses Reserve+Commit so the
+// entire burst becomes visible to readers in a single atomic writeCursor.Store.
+// All slots in the batch share the same EnqueuedAt (burst start) and
+// PublishedAt (just before Commit, after any stall in Reserve resolves).
+// BurstSize must be < BufferSize.
+type BurstReserveProducer struct {
+	BurstSize int
+	IdleMs    int
 }
 
 func (p BurstReserveProducer) Run(ctx context.Context, rb *ringring.RingBuffer[Payload]) {
