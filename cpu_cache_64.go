@@ -1,4 +1,4 @@
-//go:build amd64 || cache64
+//go:build (amd64 && !cache128) || cache64
 
 package ringring
 

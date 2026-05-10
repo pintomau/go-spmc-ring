@@ -1,0 +1,55 @@
+name: Benchmarks
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'  # 04:00 UTC Sundays
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fast:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Run core benchmarks
+        run: |
+          go test -bench='BenchmarkRingBuffer_Publish$|BenchmarkRingBuffer_Publish_NoReaders|BenchmarkRingBuffer_Publish_Direct|BenchmarkRingBuffer_PublishBatch$|BenchmarkRingBuffer_PublishBatchFunc$|BenchmarkRingBuffer_Reserve|BenchmarkPipeline_1Stage_NoPipeline|BenchmarkPipeline_1Stage$|BenchmarkPipeline_2Stage|BenchmarkPipeline_3Stage|BenchmarkBitmapReaderPool_Load' -benchtime=200ms -count=3 ./... 2>&1 | tee benchmark-fast.txt
+      - name: Upload fast results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-fast
+          path: benchmark-fast.txt
+
+  thorough:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Run all benchmarks
+        run: |
+          go test -bench=. -benchtime=200ms -count=3 ./... 2>&1 | tee benchmark-thorough.txt
+
+      - name: Upload thorough results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-thorough
+          path: benchmark-thorough.txt

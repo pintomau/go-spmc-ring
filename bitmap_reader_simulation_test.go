@@ -23,6 +23,9 @@ import (
 //	       │    → min ≤ writer, empty-state sentinel
 //	       └─ any t.Fatal/t.Error → rapid captures → shrinks → reports
 func TestBitmapReaderPool_Simulation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping simulation test in short mode")
+	}
 	rapid.Check(t, func(rt *rapid.T) {
 		numReaders := rapid.IntRange(1, 50).Draw(rt, "numReaders")
 		burstLoops := rapid.IntRange(1, 10).Draw(rt, "burstLoops")
@@ -38,7 +41,9 @@ func TestBitmapReaderPool_Simulation(t *testing.T) {
 			var activeReaders atomic.Int32
 
 			// Simulate a writer advancing continuously.
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				for {
 					select {
 					case <-ctx.Done():
@@ -48,12 +53,14 @@ func TestBitmapReaderPool_Simulation(t *testing.T) {
 						writerCursor.Add(1)
 					}
 				}
-			})
+			}()
 
 			// Simulate random readers joining, working, and leaving.
 			for i := 0; i < numReaders; i++ {
 				delay := joinDelays[i]
-				wg.Go(func() {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
 					for {
 						select {
 						case <-ctx.Done():
@@ -95,7 +102,7 @@ func TestBitmapReaderPool_Simulation(t *testing.T) {
 							_ = pool.RemoveReader(slotId)
 						}
 					}
-				})
+				}()
 			}
 
 			// Monitor invariants periodically.

@@ -25,6 +25,9 @@ import (
 //
 //	go test -run=TestPipeline_Simulation -timeout 300s ./...
 func TestPipeline_Simulation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping simulation test in short mode")
+	}
 	rapid.Check(t, func(rt *rapid.T) {
 		numStages := rapid.IntRange(1, 3).Draw(rt, "numStages")
 		readersPerStage := rapid.SliceOfN(rapid.IntRange(1, 3), numStages, numStages).Draw(rt, "readersPerStage")
@@ -62,7 +65,9 @@ func TestPipeline_Simulation(t *testing.T) {
 			for i, stage := range stages {
 				for j := range readersPerStage[i] {
 					delayMs := joinDelayMs[i][j]
-					wg.Go(func() {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
 						select {
 						case <-ctx.Done():
 							return
@@ -101,12 +106,14 @@ func TestPipeline_Simulation(t *testing.T) {
 							}
 							_ = stage.RemoveReader(slotID)
 						}
-					})
+					}()
 				}
 			}
 
 			// Writer publishes seq at sequence seq so readers can verify values.
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				seq := int64(0)
 				for {
 					select {
@@ -118,7 +125,7 @@ func TestPipeline_Simulation(t *testing.T) {
 						rb.Publish(int(seq))
 					}
 				}
-			})
+			}()
 
 			// Checkpoint loop: 500 ticks × 100 ms virtual = 50 s simulated time.
 			mins := make([]int64, numStages)

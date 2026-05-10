@@ -1,6 +1,13 @@
 # ringring
 
-Experimental single-writer, multiple-reader ring buffer in Go, inspired by the LMAX Disruptor pattern. The codebase focuses on cache-line awareness, false-sharing avoidance, and lock-free reader lifecycle management.
+[![Go Version](https://img.shields.io/github/go-mod/go-version/pintomau/ringring)](go.mod)
+[![CI](https://github.com/pintomau/ringring/actions/workflows/ci.yml/badge.svg)](https://github.com/pintomau/ringring/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/pintomau/ringring)](https://goreportcard.com/report/github.com/pintomau/ringring)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/pintomau/ringring/branch/main/graph/badge.svg)](https://codecov.io/gh/pintomau/ringring)
+
+Experimental single-writer, multiple-reader ring buffer in Go, inspired by the LMAX Disruptor pattern. The codebase
+focuses on cache-line awareness, false-sharing avoidance, and lock-free reader lifecycle management.
 
 ## Benchmarks
 
@@ -63,17 +70,17 @@ overhead. The primary driver past ~32 readers is the `scanAll` loop over all 128
 cursor slots, which the writer must run on every slow-path call to find the
 minimum cursor.
 
-**`runtime.LockOSThread`** (`ring_buffer_locked_bench_test.go`): pinning each reader and the writer to their own 
+**`runtime.LockOSThread`** (`ring_buffer_locked_bench_test.go`): pinning each reader and the writer to their own
 OS thread was tested with both `time.Sleep` and `runtime.Gosched()` idle strategies. Key findings:
 
-- **Locked + Sleep**: universally worse; catastrophic at 128 readers (+63%) because 129 OS threads sleep/wake on 12 
+- **Locked + Sleep**: universally worse; catastrophic at 128 readers (+63%) because 129 OS threads sleep/wake on 12
     hardware threads, thrashing the OS scheduler.
 - **Locked + Gosched**: worse at 1–32 readers (peak −40% at 8 readers); marginally faster at 64–128 readers (~3–6%).
-    The improvement at high reader counts comes from cursor cache locality: each locked thread keeps its cursor 
+    The improvement at high reader counts comes from cursor cache locality: each locked thread keeps its cursor
     slot warm on the same physical core. The hurt at low counts comes from M:P scheduling overhead (the locked M sits
     idle each time `Gosched` yields its P).
 - **Unlocked + Gosched on keepUpReader**: dramatically worse everywhere (peak −157% at 8 readers).
-    `Gosched` in a tight idle loop does not park the goroutine: it keeps re-entering the run queue, creating a 
+    `Gosched` in a tight idle loop does not park the goroutine: it keeps re-entering the run queue, creating a
     scheduler storm that starves the writer. `time.Sleep` is qualitatively better because it genuinely removes
     the goroutine from the run queue.
 
@@ -175,7 +182,7 @@ HDR histograms.
 Command used:
 
 ```bash
-go run ./cmd/latency -matrix -duration 10s -output csv > latency.csv
+go run ./cmd/latency -matrix -duration 10s -output csv
 ```
 
 ### Top 5 configurations by e2e p99

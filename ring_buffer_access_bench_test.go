@@ -27,7 +27,9 @@ func benchmarkDirectBufferAccess[T any](b *testing.B, readerLag int64) {
 	readerDone := make(chan time.Duration)
 
 	// Reader goroutine
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		readerStart := time.Now()
 		r := readerPos.Load()
 
@@ -58,7 +60,7 @@ func benchmarkDirectBufferAccess[T any](b *testing.B, readerLag int64) {
 				}
 			}
 		}
-	})
+	}()
 
 	// Give reader time to start
 	runtime.Gosched()

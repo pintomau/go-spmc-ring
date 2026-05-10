@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [opened, synchronize, reopened]
+
+  workflow_dispatch:
+    inputs:
+      refToBuild:
+        description: Branch, tag or commit SHA1 to build and test
+        required: false
+        type: string
+
+concurrency:
+  # github.workflow: this workflow type
+  # github.event.pull_request.id: if this is a pull request, this pull request's id
+  #   https://docs.github.com/developers/webhooks-and-events/webhooks/webhook-events-and-payloads#pull_request
+  group: "workflow = ${{ github.workflow }}, pr = ${{ github.event.pull_request.id }}"
+  # we only want to cancel on pull_request
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        go-version: ['1.24', '1.25', '1.26']
+        os: [ubuntu-latest, windows-latest, macos-latest]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # checkout the ref given by dispatch, or HEAD otherwise
+          ref: ${{ inputs.refToBuild || '' }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        if: matrix.os != 'ubuntu-latest' || matrix.go-version != '1.26'
+        run: go test -short ./...
+
+      - name: go test (short + coverage)
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.26'
+        run: go test -short -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.26'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.out
+          fail_ci_if_error: false
+
+  simulation-quick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RAPID_CHECKS: "100"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # checkout the ref given by dispatch, or HEAD otherwise
+          ref: ${{ inputs.refToBuild || '' }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: Run simulation tests (reduced checks)
+        run: go test -run 'Simulation' -timeout 12m ./...

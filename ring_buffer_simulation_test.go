@@ -31,6 +31,9 @@ const (
 //	       │    → corruption, min ≤ writer, empty-state sentinel
 //	       └─ any t.Fatal/t.Error → rapid captures → shrinks → reports
 func TestRingBuffer_Simulation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping simulation test in short mode")
+	}
 	rapid.Check(t, func(rt *rapid.T) {
 		numReaders := rapid.IntRange(1, 50).Draw(rt, "numReaders")
 		burstLoops := rapid.IntRange(1, 10).Draw(rt, "burstLoops")
@@ -49,7 +52,9 @@ func TestRingBuffer_Simulation(t *testing.T) {
 			var corruptionDetected atomic.Int32
 
 			// Writer goroutine continually publishes increasing sequence numbers.
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				seq := int64(0)
 				for {
 					select {
@@ -61,12 +66,14 @@ func TestRingBuffer_Simulation(t *testing.T) {
 						rbuf.Publish(int(seq))
 					}
 				}
-			})
+			}()
 
 			// Spawn reader actors that randomly join, process, and leave the ring buffer.
 			for i := 0; i < numReaders; i++ {
 				delay := joinDelays[i]
-				wg.Go(func() {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
 					for {
 						select {
 						case <-ctx.Done():
@@ -112,7 +119,7 @@ func TestRingBuffer_Simulation(t *testing.T) {
 							_ = rbuf.barrier.RemoveReader(slotID)
 						}
 					}
-				})
+				}()
 			}
 
 			// Periodically assert invariants under simulated time.
@@ -143,6 +150,9 @@ func TestRingBuffer_Simulation(t *testing.T) {
 }
 
 func TestRingBuffer_BatchSimulation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping simulation test in short mode")
+	}
 	rapid.Check(t, func(rt *rapid.T) {
 		numReaders := rapid.IntRange(1, 8).Draw(rt, "numReaders")
 		readerIdleDelays := rapid.SliceOfN(rapid.IntRange(0, 3), numReaders, numReaders).Draw(rt, "readerIdleDelayMs")
@@ -182,7 +192,9 @@ func TestRingBuffer_BatchSimulation(t *testing.T) {
 
 			// Writer cycles through the batch APIs so the same simulation exercises
 			// PublishBatch, PublishBatchFunc, and manual Reserve/Commit paths.
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				seq := int64(0)
 				step := 0
 				for {
@@ -226,7 +238,7 @@ func TestRingBuffer_BatchSimulation(t *testing.T) {
 						step++
 					}
 				}
-			})
+			}()
 
 			for i := 0; i < numReaders; i++ {
 				idleDelay := time.Duration(readerIdleDelays[i]+1) * time.Millisecond

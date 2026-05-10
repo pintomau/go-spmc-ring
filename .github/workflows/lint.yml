@@ -1,0 +1,33 @@
+name: Lint
+
+on:
+  pull_request:
+    branches: [opened, synchronize, reopened]
+
+concurrency:
+  # github.workflow: this workflow type
+  # github.event.pull_request.id: if this is a pull request, this pull request's id
+  #   https://docs.github.com/developers/webhooks-and-events/webhooks/webhook-events-and-payloads#pull_request
+  group: "workflow = ${{ github.workflow }}, pr = ${{ github.event.pull_request.id }}"
+  # we only want to cancel on pull_request
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: go vet
+        run: go vet ./...

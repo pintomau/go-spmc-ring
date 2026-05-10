@@ -102,9 +102,11 @@ func (b *BitmapReaderPool[T]) AddReader(fn ReaderFunc[T]) (int, error) {
 	// If the "running" bit was NOT set in the old state, it means the goroutine
 	// had terminated (or never started). We must spawn a new one
 	if oldState&slotStateRunning == 0 {
-		b.wg.Go(func() {
+		b.wg.Add(1)
+		go func() {
+			defer b.wg.Done()
 			b.runSlot(slotId)
-		})
+		}()
 	}
 
 	return slotId, nil
