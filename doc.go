@@ -11,8 +11,10 @@
 // Quick start:
 //
 //	rbuf, _ := ringring.NewRingBuffer[int](ctx, 1024)
-//	slotID, _ := rbuf.Barrier().AddReader(func(ctx context.Context, rv ringring.ReadView[int], cur *atomic.Int64) {
-//	    // read loop
+//	stage := rbuf.NewStage(nil) // gated by the writer cursor
+//	rbuf.SetGatingStage(stage)  // writer waits for this stage's slowest reader
+//	slotID, _ := stage.AddReader(func(ctx context.Context, rv ringring.ReadView[int], cur *atomic.Int64) {
+//	    // read loop; see ExampleRingBuffer
 //	})
 //	rbuf.Publish(42)
 package ringring

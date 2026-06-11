@@ -247,7 +247,7 @@ func BenchmarkRingBuffer_Publish_IteratorReader(b *testing.B) {
 
 var batchSizes = []int64{1, 10, 100, 1000}
 
-// keepUpReader mirrors BenchmarkRingBuffer_Publish's reader — drains whatever the
+// keepUpReader mirrors BenchmarkRingBuffer_Publish's reader: it drains whatever the
 // writer has published so the batch writer stays on the hot path.
 func keepUpReader(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
 	current := readerCursor.Load()

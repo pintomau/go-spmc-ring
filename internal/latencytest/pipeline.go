@@ -146,7 +146,7 @@ func makePipelineBatchReaderFn(
 			default:
 				w := rv.LoadWriterBarrier()
 				if expected > w {
-					// spin only — no Gosched or Sleep backoff
+					// spin only, no Gosched or Sleep backoff
 					continue
 				}
 				batch := rv.GetRange(expected&mask, w&mask)

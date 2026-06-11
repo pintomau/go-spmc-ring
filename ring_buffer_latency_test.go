@@ -8,7 +8,7 @@ import (
 	"github.com/pintomau/ringring/internal/latencytest"
 )
 
-// All TestLatency_* tests skip under testing.Short() — they run for 10s+ each.
+// All TestLatency_* tests skip under testing.Short(); they run for 10s+ each.
 
 func TestLatency_FixedRate_Baseline(t *testing.T) {
 	if testing.Short() {

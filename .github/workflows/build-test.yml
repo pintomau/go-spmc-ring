@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
-    branches: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened]
 
   workflow_dispatch:
     inputs:

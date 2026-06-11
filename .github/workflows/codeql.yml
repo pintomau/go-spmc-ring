@@ -2,7 +2,7 @@ name: CodeQL
 
 on:
   pull_request:
-    branches: [ opened, synchronize, reopened ]
+    types: [ opened, synchronize, reopened ]
   schedule:
     - cron: '0 6 * * 1'   # Every Monday at 06:00 UTC
 
