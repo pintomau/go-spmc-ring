@@ -164,24 +164,30 @@ wired before the first publish (see [Pipeline stages](#pipeline-stages)).
 
 ### Consuming in batches
 
-`ReadView` offers three access paths. `Get(seq)` takes a raw sequence number, while `GetRange` and
-`Iterate` take **masked indices**:
+`ReadView` offers three access paths, and all of them take absolute sequence numbers; masking
+is internal. `Get(seq)` returns a single event. `GetSegments(start, end)` returns up to two
+zero-copy slices spanning start..end inclusive; the second is non-nil only when the range
+wraps the ring end, mirroring the two-segment shape `Reserve` gives the writer.
+`Iterate(start, end)` yields each event in order via an iterator.
 
 ```go
-mask := rv.GetMask()
 if w := rv.LoadWriterBarrier(); expected <= w {
-	batch := rv.GetRange(expected&mask, w&mask) // direct slice when contiguous; copies on wrap
-	for i := range batch {
-		process(batch[i])
+	seg1, seg2 := rv.GetSegments(expected, w) // zero-copy, even when the range wraps
+	for i := range seg1 {
+		process(seg1[i])
+	}
+	for i := range seg2 {
+		process(seg2[i])
 	}
 	cur.Store(w)
 	expected = w + 1
 }
 ```
 
-`GetRange` returns a slice straight into the ring when the range doesn't wrap (the common case), so
-the batch must be fully consumed before the cursor is advanced: after `cur.Store(w)` the writer may
-overwrite those slots.
+Both segments point straight into the ring, so the batch must be fully consumed before the
+cursor is advanced: after `cur.Store(w)` the writer may overwrite those slots. Hot batch
+readers should prefer `GetSegments` over `Iterate`: the iterator's per-event indirect call
+costs roughly 2x for trivial loop bodies.
 
 ### Publishing in batches
 

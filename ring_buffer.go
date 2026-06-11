@@ -207,8 +207,9 @@ func (r *RingBuffer[T]) segments(firstSeq, n int64) (seg1, seg2 []T) {
 // slot in both segments and then pass the returned claim to Commit exactly once,
 // in publish order. n must satisfy 0 < n < bufferSize.
 //
-// Callers compiled with GOEXPERIMENT=simd may fill seg1 and seg2 using the simd
-// package's aligned loads/stores; each segment is contiguous in memory.
+// Each segment is contiguous in memory, so callers may fill them with bulk
+// techniques such as the GOEXPERIMENT=simd package's vector stores. No
+// alignment beyond the element type's natural alignment is guaranteed.
 func (r *RingBuffer[T]) Reserve(n int64) (seg1, seg2 []T, claim int64) {
 	if n <= 0 || n >= r.bufferSize {
 		panic("ringring: Reserve n out of range (must satisfy 0 < n < bufferSize)")

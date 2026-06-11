@@ -171,8 +171,6 @@ func BenchmarkRingBuffer_Publish_Direct(b *testing.B) {
 	}
 }
 
-var objs []object // prevent optimization
-
 func BenchmarkRingBuffer_Publish_BatchReader(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -185,10 +183,7 @@ func BenchmarkRingBuffer_Publish_BatchReader(b *testing.B) {
 
 	// Batch reader: process contiguous segments
 	rb.barrier.AddReader(func(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
-		var (
-			current = readerCursor.Load()
-			mask    = readView.GetMask()
-		)
+		current := readerCursor.Load()
 		for {
 			select {
 			case <-ctx.Done():
@@ -197,11 +192,13 @@ func BenchmarkRingBuffer_Publish_BatchReader(b *testing.B) {
 				w := readView.LoadWriterBarrier()
 
 				if current < w {
-					// Calculate segment boundaries
-					start := (current + 1) & mask
-					end := w & mask
-
-					objs = readView.GetRange(start, end)
+					seg1, seg2 := readView.GetSegments(current+1, w)
+					for i := range seg1 {
+						obj = &seg1[i]
+					}
+					for i := range seg2 {
+						obj = &seg2[i]
+					}
 
 					readerCursor.Store(w)
 					current = w
@@ -229,12 +226,9 @@ func BenchmarkRingBuffer_Publish_IteratorReader(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	// Batch reader: process contiguous segments
+	// Iterator reader: range over each available batch
 	rb.barrier.AddReader(func(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
-		var (
-			current = readerCursor.Load()
-			mask    = readView.GetMask()
-		)
+		current := readerCursor.Load()
 		for {
 			select {
 			case <-ctx.Done():
@@ -243,12 +237,7 @@ func BenchmarkRingBuffer_Publish_IteratorReader(b *testing.B) {
 				w := readView.LoadWriterBarrier()
 
 				if current < w {
-					// Calculate segment boundaries (like go-disruptor)
-					start := (current + 1) & mask
-					end := w & mask
-
-					for obj = range readView.Iterate(start, end) {
-
+					for obj = range readView.Iterate(current+1, w) {
 					}
 
 					readerCursor.Store(w)

@@ -16,7 +16,7 @@ const (
 	SpinReader  ReaderPolling = iota // pure busy-spin
 	YieldReader                      // runtime.Gosched() each miss
 	SleepReader                      // time.Sleep(1µs) each miss
-	BatchReader                      // GetRange per batch; single time.Now() per batch
+	BatchReader                      // GetSegments per batch; single time.Now() per batch
 )
 
 func (r ReaderPolling) String() string {
@@ -74,14 +74,14 @@ func makeConsumerFn(rec *LatencyRecorder, polling ReaderPolling, sleepPerEvent t
 	}
 }
 
-// makeBatchConsumerFn returns a ReaderFunc that reads each available batch with
-// rv.GetRange and stamps all events in the batch with a single time.Now() call.
-// For contiguous batches (the common case) GetRange returns a direct slice into
-// the ring buffer with no allocation. All events in a batch share the same
-// consumedAt, so per-event intra-batch latency is not visible.
+// makeBatchConsumerFn returns a ReaderFunc that reads each available batch
+// with rv.GetSegments and stamps all events in the batch with a single
+// time.Now() call. Both segments are zero-copy views into the ring; seg2 is
+// non-empty only when the batch wraps the ring end. All events in a batch
+// share the same consumedAt, so per-event intra-batch latency is not
+// visible.
 func makeBatchConsumerFn(rec *LatencyRecorder) ringring.ReaderFunc[Payload] {
 	return func(ctx context.Context, rv ringring.ReadView[Payload], cur *atomic.Int64) {
-		mask := rv.GetMask()
 		expected := cur.Load() + 1
 		for {
 			select {
@@ -92,10 +92,13 @@ func makeBatchConsumerFn(rec *LatencyRecorder) ringring.ReaderFunc[Payload] {
 				if expected > w {
 					continue
 				}
-				batch := rv.GetRange(expected&mask, w&mask)
+				seg1, seg2 := rv.GetSegments(expected, w)
 				consumedAt := time.Now().UnixNano()
-				for i := range batch {
-					rec.RecordConsume(batch[i], consumedAt)
+				for i := range seg1 {
+					rec.RecordConsume(seg1[i], consumedAt)
+				}
+				for i := range seg2 {
+					rec.RecordConsume(seg2[i], consumedAt)
 				}
 				cur.Store(w)
 				expected = w + 1
