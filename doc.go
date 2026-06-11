@@ -5,6 +5,7 @@
 //   - Lock-free reader lifecycle management via CAS bitmap
 //   - Configurable wait strategies (Spin, Yield, Sleep, Hybrid)
 //   - Batch publish primitives (Reserve/Commit, PublishBatch)
+//   - Non-blocking variants (TryPublish, TryReserve) and a Remaining capacity signal
 //   - Pipeline staging (Stage, SetGatingStage)
 //   - False-sharing elimination through cache-line padding
 //

@@ -62,6 +62,28 @@ func BenchmarkRingBuffer_Publish(b *testing.B) {
 	}
 }
 
+// BenchmarkRingBuffer_TryPublish mirrors BenchmarkRingBuffer_Publish (same
+// keep-up reader, same payload, TryPublishFunc instead of PublishFunc) so the
+// two are directly comparable. The retry loop only spins when the ring is
+// momentarily full.
+func BenchmarkRingBuffer_TryPublish(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const capacity = 1 << 22
+	rb, err := NewRingBuffer[object](ctx, capacity)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	rb.barrier.AddReader(keepUpReader)
+
+	for b.Loop() {
+		for !rb.TryPublishFunc(produce) {
+		}
+	}
+}
+
 func BenchmarkRingBuffer_Publish_NoReaders(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

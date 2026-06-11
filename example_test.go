@@ -69,3 +69,55 @@ func ExampleRingBuffer() {
 	// Read: 20
 	// Read: 30
 }
+
+// This example shows a reader that evicts itself when it falls too far
+// behind, instead of stalling the writer forever. Returning from a ReaderFunc
+// is a first-class way to leave the pool: the slot is deactivated and freed,
+// and the writer is ungated. The reader picks its own exit point, so it is
+// never mid-read when the writer reclaims its slots.
+func ExampleRingBuffer_selfEvictingReader() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rb, err := ringring.NewRingBuffer[int](ctx, 8)
+	if err != nil {
+		fmt.Println("error creating ring buffer:", err)
+		return
+	}
+
+	s := rb.NewStage(nil)
+	rb.SetGatingStage(s)
+
+	evicted := make(chan struct{})
+	_, err = s.AddReader(func(ctx context.Context, rv ringring.ReadView[int], cur *atomic.Int64) {
+		defer close(evicted)
+		const maxLag = 4
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if rv.LoadWriterBarrier()-cur.Load() > maxLag {
+					return // self-evict: slot is freed, writer is ungated
+				}
+			}
+		}
+	})
+	if err != nil {
+		fmt.Println("error adding reader:", err)
+		return
+	}
+
+	// 100 events exceed the capacity-8 ring many times over. The blocking
+	// Publish calls can only complete because the laggard removes itself.
+	for i := 1; i <= 100; i++ {
+		rb.Publish(i)
+	}
+	<-evicted
+	fmt.Println("published 100 events past a stalled reader")
+
+	s.Shutdown()
+
+	// Output:
+	// published 100 events past a stalled reader
+}

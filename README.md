@@ -205,6 +205,30 @@ rb.Commit(claim) // one atomic store makes the whole batch visible
 `Reserve` requires `0 < n < bufferSize` (a full-buffer reservation can never be satisfied and panics),
 and every `Reserve` must be paired with exactly one `Commit`, in order.
 
+### Non-blocking publishing
+
+`Publish` blocks when the ring is full. When dropping or deferring work beats waiting on a
+slow reader, use the try variants. They return `false` instead of waiting:
+
+```go
+if !rb.TryPublish(event) {
+    // ring full: drop the event, buffer upstream, or push back on the source
+}
+
+if rb.Remaining() < lowWater {
+    // adapt before hitting the wall: shed load or switch to batching
+}
+```
+
+`TryReserve` is the batch sibling: it returns `ok = false` when the ring lacks room for the
+whole batch. The try variants share the writer's contract, so call them only from the
+writer goroutine.
+
+A slow reader can also opt out from its side: returning from a `ReaderFunc` removes the
+reader from the pool and ungates the writer. The reader picks its own exit point, so it is
+never mid-read when its slots are reclaimed. See the self-evicting reader example in the
+package docs.
+
 ### Pipeline stages
 
 Stages chain reader groups so stage N only consumes events all of stage N−1 has committed, which is the LMAX

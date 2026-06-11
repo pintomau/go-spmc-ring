@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Non-blocking publish variants: `TryPublish`, `TryPublishFunc`, `TryReserve`
+- `Remaining` capacity signal for producer-side adaptation
+- Self-evicting reader example: returning from a `ReaderFunc` leaves the pool
+
 ## [0.1.0] - 2026-05-10
 
 ### Added
