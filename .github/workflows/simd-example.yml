@@ -1,0 +1,40 @@
+name: SIMD example guard
+
+# Guards example_simd_test.go, which only builds under GOEXPERIMENT=simd
+# (Go 1.26+, amd64). When a future Go release changes or graduates the
+# archsimd API, this workflow fails loudly instead of letting the example
+# rot: an unknown GOEXPERIMENT errors, an API change breaks the build, and
+# the grep catches the silent case where the build tag stops matching and
+# the example never runs. The weekly schedule catches new Go releases that
+# land without any push to this repo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  schedule:
+    - cron: '0 3 * * 1'   # 03:00 UTC Mondays
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simd-example:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Run the simd example
+        env:
+          GOEXPERIMENT: simd
+        run: |
+          go test -run 'ExampleRingBuffer_Reserve' -v . | tee simd-example.log
+          grep -q -- '--- PASS: ExampleRingBuffer_Reserve' simd-example.log

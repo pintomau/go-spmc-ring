@@ -185,9 +185,11 @@ if w := rv.LoadWriterBarrier(); expected <= w {
 ```
 
 Both segments point straight into the ring, so the batch must be fully consumed before the
-cursor is advanced: after `cur.Store(w)` the writer may overwrite those slots. Hot batch
-readers should prefer `GetSegments` over `Iterate`: the iterator's per-event indirect call
-costs roughly 2x for trivial loop bodies.
+cursor is advanced: after `cur.Store(w)` the writer may overwrite those slots. `Iterate` is
+built on `GetSegments` and measures at parity with direct segment loops when the body
+inlines; reach for `GetSegments` when you need the slices themselves, such as bulk copies
+or vector processing. All read paths are allocation-free, wrapping included (see
+[Batch read paths](docs/PERFORMANCE.md#batch-read-paths)).
 
 ### Publishing in batches
 

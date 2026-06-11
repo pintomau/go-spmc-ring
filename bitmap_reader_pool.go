@@ -532,9 +532,10 @@ func (r *ReadView[T]) GetSegments(start, end int64) (seg1, seg2 []T) {
 
 // Iterate yields pointers to sequences start..end inclusive, in order.
 // Sequences are absolute, as accepted by Get and GetSegments. Implemented
-// over GetSegments; per-element it costs an indirect call more than looping
-// the segments directly (measured ~2x for trivial bodies), so hot batch
-// readers should prefer GetSegments.
+// over GetSegments; when the compiler inlines the loop body it measures at
+// parity with looping the segments directly (docs/PERFORMANCE.md, batch
+// read paths). Prefer GetSegments when the slices themselves are needed,
+// for bulk copies or vector processing.
 func (r *ReadView[T]) Iterate(start, end int64) iter.Seq[*T] {
 	return func(yield func(*T) bool) {
 		seg1, seg2 := r.GetSegments(start, end)

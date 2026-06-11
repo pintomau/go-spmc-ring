@@ -152,6 +152,38 @@ So the practical conclusion is:
 2. batching improves throughput substantially
 3. for medium and large batches, total time grows close to linearly while cost per item stays nearly constant
 
+### Batch read paths
+
+`ReadView` access paths, benchmarked directly over a pre-filled 8192-slot buffer (512 KB,
+cache-resident) with no ring or goroutines involved, so the numbers isolate pure traversal
+cost. Work per event is a one-byte XOR. The wrapped variants drain a range that straddles
+the ring end, the worst case for batch reads. Mean of 10 runs:
+
+```bash
+go test -run '^$' -bench 'BenchmarkReadView' -count=10 .
+```
+
+| Batch size | `GetSegments` (wrapped) ns/item | `GetSegments` (contiguous) ns/item | `Get` loop ns/item | `Iterate` (wrapped) ns/item |
+|-----------:|--------------------------------:|-----------------------------------:|-------------------:|----------------------------:|
+|         10 |                            0.40 |                                0.37 |               0.39 |                         0.42 |
+|        256 |                            0.23 |                                0.27 |               0.34 |                         0.23 |
+|       4096 |                            0.31 |                                0.31 |               0.31 |                         0.31 |
+
+Takeaways:
+
+- **Every read path is allocation-free**, including `GetSegments` on ranges that wrap the
+  ring end (0 B/op, 0 allocs/op across the board). The two returned segments are direct
+  views into the ring.
+- **Wrapping costs nothing measurable.** The wrapped `GetSegments` drain is at or below the
+  contiguous one at every batch size; the seam between the two segments does not show up.
+- **`Iterate` is at parity with `GetSegments`** at every batch size here: it is built on
+  `GetSegments`, and the compiler inlines the range-over-func machinery away when the loop
+  body is inlinable. Prefer `GetSegments` when you need the slices themselves (bulk copies,
+  vector processing), not because the iterator is slower.
+- **The per-element `Get` loop pays its masking and bounds work per event**, visible at
+  mid batch sizes (0.34 vs 0.23 ns/item at batch 256) and washed out at batch 4096 where
+  cache-line fetch dominates.
+
 ## Other benchmark coverage
 
 The repository also contains additional benchmark families that are not summarized in the tables above:

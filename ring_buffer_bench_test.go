@@ -362,3 +362,87 @@ func BenchmarkRingBuffer_Reserve(b *testing.B) {
 		})
 	}
 }
+
+// Read-path access benchmarks. The ReadView is constructed directly over a
+// pre-filled buffer (no ring, no goroutines) so the numbers isolate pure
+// traversal cost per access path. Work per event: XOR one byte into a sink.
+// The wrapped variants drain a range that straddles the ring end, the worst
+// case for batch reads; GetSegments stays zero-copy there.
+
+const readPathCapacity = 1 << 13
+
+var readPathBatches = []int64{10, 256, 4096}
+
+var byteSink byte
+
+func newReadPathView() ReadView[object] {
+	buf := make([]object, readPathCapacity)
+	for i := range buf {
+		buf[i].x[0] = byte(i)
+	}
+	return ReadView[object]{buffer: buf, mask: readPathCapacity - 1}
+}
+
+// readPathRange picks absolute start/end so the range straddles the ring end.
+func readPathRange(n int64) (start, end int64) {
+	start = readPathCapacity - n/2 - 1
+	return start, start + n - 1
+}
+
+func benchReadPath(b *testing.B, drain func(rv ReadView[object], start, end int64, acc byte) byte) {
+	for _, n := range readPathBatches {
+		b.Run(fmt.Sprintf("batch=%d", n), func(b *testing.B) {
+			rv := newReadPathView()
+			start, end := readPathRange(n)
+			b.ReportAllocs()
+			var acc byte
+			for b.Loop() {
+				acc = drain(rv, start, end, acc)
+			}
+			byteSink = acc
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/float64(n), "ns/item")
+		})
+	}
+}
+
+func BenchmarkReadView_GetSegments(b *testing.B) {
+	benchReadPath(b, func(rv ReadView[object], start, end int64, acc byte) byte {
+		seg1, seg2 := rv.GetSegments(start, end)
+		for i := range seg1 {
+			acc ^= seg1[i].x[0]
+		}
+		for i := range seg2 {
+			acc ^= seg2[i].x[0]
+		}
+		return acc
+	})
+}
+
+func BenchmarkReadView_GetSegments_NoWrap(b *testing.B) {
+	benchReadPath(b, func(rv ReadView[object], start, end int64, acc byte) byte {
+		// Same batch length shifted to a contiguous region.
+		seg1, _ := rv.GetSegments(0, end-start)
+		for i := range seg1 {
+			acc ^= seg1[i].x[0]
+		}
+		return acc
+	})
+}
+
+func BenchmarkReadView_Get(b *testing.B) {
+	benchReadPath(b, func(rv ReadView[object], start, end int64, acc byte) byte {
+		for seq := start; seq <= end; seq++ {
+			acc ^= rv.Get(seq).x[0]
+		}
+		return acc
+	})
+}
+
+func BenchmarkReadView_Iterate(b *testing.B) {
+	benchReadPath(b, func(rv ReadView[object], start, end int64, acc byte) byte {
+		for p := range rv.Iterate(start, end) {
+			acc ^= p.x[0]
+		}
+		return acc
+	})
+}
