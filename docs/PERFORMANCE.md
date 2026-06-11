@@ -16,7 +16,7 @@ The tables below summarize the core ring benchmarks on this machine:
 
 Results are machine-specific. The numbers below are the arithmetic mean of 10 benchmark runs.
 
-Command used:
+Command used (`mise run bench:core`):
 
 ```bash
 go test -run '^$' -bench 'BenchmarkRingBuffer_(Publish$|Publish_NoReaders$|Publish_Direct$|PublishBatch$|PublishBatchFunc$|Reserve$)' -count=10 .
@@ -40,7 +40,7 @@ the full numbers.
 
 ### Multi-reader publish scaling
 
-Command used:
+Command used (`mise run bench:multireader`):
 
 ```bash
 go test -run '^$' -bench 'BenchmarkRingBuffer_Publish_MultiReader$' -count=10 .
@@ -65,7 +65,7 @@ overhead. The primary driver past ~32 readers is the `scanAll` loop over all 128
 cursor slots, which the writer must run on every slow-path call to find the
 minimum cursor.
 
-**`runtime.LockOSThread`** (`ring_buffer_locked_bench_test.go`): pinning each reader and the writer to their own
+**`runtime.LockOSThread`** (`ring_buffer_bench_test.go`): pinning each reader and the writer to their own
 OS thread was tested with both `time.Sleep` and `runtime.Gosched()` idle strategies. Key findings:
 
 - **Locked + Sleep**: universally worse; catastrophic at 128 readers (+63%) because 129 OS threads sleep/wake on 12
@@ -89,7 +89,7 @@ The stage table below uses the dedicated pipeline benchmark family in `ring_buff
 are the arithmetic mean of a single 10-run set on the same machine (first element dropped if >5% above the rest mean
 as a transient-spike filter).
 
-Command used:
+Command used (`mise run bench:pipeline`):
 
 ```bash
 go test -run '^$' -bench '^BenchmarkPipeline' -benchtime=1s -count=10 .
@@ -157,7 +157,7 @@ So the practical conclusion is:
 `ReadView` access paths, benchmarked directly over a pre-filled 8192-slot buffer (512 KB,
 cache-resident) with no ring or goroutines involved, so the numbers isolate pure traversal
 cost. Work per event is a one-byte XOR. The wrapped variants drain a range that straddles
-the ring end, the worst case for batch reads. Mean of 10 runs:
+the ring end, the worst case for batch reads. Mean of 10 runs (`mise run bench:readview`):
 
 ```bash
 go test -run '^$' -bench 'BenchmarkReadView' -count=10 .
@@ -188,16 +188,14 @@ Takeaways:
 
 The repository also contains additional benchmark families that are not summarized in the tables above:
 
-- `ring_buffer_access_bench_test.go` - direct buffer access comparisons
-- `ring_buffer_false_sharing_bench_test.go` - element-size and reader-lag false-sharing scenarios
-- `bitmap_reader_pool_bench_test.go` - reader-pool minimum scan costs
-- `bitmap_reader_false_sharing_bench_test.go` - reader cursor layout effects
+- `ring_buffer_false_sharing_bench_test.go` - element-size and reader-lag false-sharing scenarios, including direct-buffer (no API) controls
+- `bitmap_reader_bench_test.go` - reader-pool minimum scan costs and reader cursor layout effects
 - `ring_buffer_pipeline_bench_test.go` - stage/pipeline depth comparisons
 
-To run the full suite:
+To run the full suite (or `mise run bench` for a quick smoke):
 
 ```bash
-go test -bench=. ./...
+go test -run '^$' -bench=. .
 ```
 
 ## Latency matrix

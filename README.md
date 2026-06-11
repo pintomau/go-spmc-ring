@@ -349,8 +349,9 @@ including how the picture changes at p99.9 and beyond, are in
   randomized writers, batch sizes, and reader add/remove churn are checked against ordering and
   visibility invariants. The full suite runs in minutes locally; a nightly CI job runs 5,000 cases
   per property.
-- **Deterministic replay.** Simulation failures print a seed; `go test -run
-  TestRingBuffer_DeterministicSimulation . -rbSeed <seed>` reproduces the exact interleaving.
+- **Deterministic replay.** When a simulation fails, rapid saves a failfile under
+  `testdata/rapid/` and the next test run replays it automatically; a specific run can be
+  reproduced with `RAPID_SEED=<seed> go test -run Simulation .`.
 - **Multi-platform CI.** Build and short tests across Linux, macOS, and Windows on Go 1.24–1.26,
   plus golangci-lint and CodeQL.
 - **Coordinated-omission-aware latency harness.** `cmd/latency` stamps events with their *intended*

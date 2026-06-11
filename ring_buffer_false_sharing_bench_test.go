@@ -3,8 +3,10 @@ package ringring
 import (
 	"context"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // Test different element sizes to measure false sharing impact
@@ -49,8 +51,10 @@ func benchmarkBufferFalseSharing[T any](b *testing.B, newEvent func(*T), readerL
 
 	// Add a reader that lags behind writer by readerLag positions
 	readerDone := make(chan struct{})
+	readerStarted := make(chan struct{})
 	rb.barrier.AddReader(func(ctx context.Context, readView ReadView[T], readerCursor *atomic.Int64) {
 		defer close(readerDone)
+		close(readerStarted)
 		for {
 			select {
 			case <-ctx.Done():
@@ -71,8 +75,10 @@ func benchmarkBufferFalseSharing[T any](b *testing.B, newEvent func(*T), readerL
 		}
 	})
 
-	// Give reader time to start
-	runtime.Gosched()
+	// Wait until the pool has invoked the ReaderFunc: a cancel that lands
+	// before then makes runSlot exit without calling it, so readerDone
+	// would never close.
+	<-readerStarted
 
 	for b.Loop() {
 		rb.PublishFunc(newEvent)
@@ -152,6 +158,9 @@ func BenchmarkBuffer_MultiReader_SmallElement(b *testing.B) {
 	lags := []int64{10, 50, 200, 1000}
 	done := make([]chan struct{}, len(lags))
 
+	var started sync.WaitGroup
+	started.Add(len(lags))
+
 	for i, lag := range lags {
 		done[i] = make(chan struct{})
 		readerLag := lag
@@ -159,6 +168,7 @@ func BenchmarkBuffer_MultiReader_SmallElement(b *testing.B) {
 
 		rb.barrier.AddReader(func(ctx context.Context, readView ReadView[SmallEvent], readerCursor *atomic.Int64) {
 			defer close(readerDone)
+			started.Done()
 			for {
 				select {
 				case <-ctx.Done():
@@ -177,8 +187,10 @@ func BenchmarkBuffer_MultiReader_SmallElement(b *testing.B) {
 		})
 	}
 
-	// give time for readers to start
-	runtime.Gosched()
+	// Wait until the pool has invoked every ReaderFunc: a cancel that lands
+	// before then makes runSlot exit without calling it, so the done
+	// channels would never close.
+	started.Wait()
 
 	for b.Loop() {
 		rb.PublishFunc(func(s *SmallEvent) {
@@ -192,56 +204,101 @@ func BenchmarkBuffer_MultiReader_SmallElement(b *testing.B) {
 	}
 }
 
-// Pad64 is padded to 64 bytes.
-// On machines with 128-byte cache lines (like Apple Silicon M-series),
-// two adjacent Pad64 structs will share a single cache line.
-type Pad64 struct {
-	cursor atomic.Int64
-	_      [56]byte
-}
+// Direct buffer access benchmarks (bypassing RingBuffer API)
+// to isolate false sharing effects
 
-// Pad128 is padded to 128 bytes.
-// This ensures that each struct occupies its own 128-byte cache line,
-// preventing false sharing on Apple Silicon.
-type Pad128 struct {
-	cursor atomic.Int64
-	_      [120]byte
-}
+// Benchmark: Single writer, single reader with direct buffer access
+func benchmarkDirectBufferAccess[T any](b *testing.B, readerLag int64) {
+	const capacity = 1 << 16
+	buffer := make([]T, capacity)
+	mask := int64(capacity - 1)
 
-var workerID atomic.Int64
+	var writerPos atomic.Int64
+	var readerPos atomic.Int64
+	writerPos.Store(0)
+	readerPos.Store(-readerLag)
 
-func BenchmarkFalseSharing_Pad64(b *testing.B) {
-	// Reset worker ID counter
-	workerID.Store(-1)
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+	readerDone := make(chan time.Duration)
 
-	// Allocate enough slots for all potential workers
-	slots := make([]Pad64, 1024)
+	// Reader goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		readerStart := time.Now()
+		r := readerPos.Load()
 
-	b.RunParallel(func(pb *testing.PB) {
-		// Assign a unique slot to this worker
-		id := workerID.Add(1)
-		mySlot := &slots[id]
+		for {
+			select {
+			case <-done:
+				// Writer finished, read remaining elements
+				finalWriterPos := writerPos.Load()
+				for r < finalWriterPos {
+					_ = buffer[r&mask]
+					r++
+				}
+				readerPos.Store(r)
+				readerDone <- time.Since(readerStart)
+				return
+			default:
+				w := writerPos.Load()
 
-		for pb.Next() {
-			mySlot.cursor.Add(1)
+				// Stay readerLag behind
+				target := w - readerLag
+				if target > r {
+					// Actually read from buffer (forces cache load)
+					for r < target {
+						_ = buffer[r&mask]
+						r++
+					}
+					readerPos.Store(r)
+				}
+			}
 		}
-	})
+	}()
+
+	// Give reader time to start
+	runtime.Gosched()
+
+	// Writer: write to buffer
+	for b.Loop() {
+		seq := writerPos.Load()
+		buffer[seq&mask] = *new(T) // Write to buffer
+		writerPos.Store(seq + 1)
+	}
+
+	// Signal writer is done
+	close(done)
+
+	// Wait for reader to finish and get its duration
+	readerDuration := <-readerDone
+	wg.Wait()
+
+	// Report reader metrics
+	readerOpsPerSec := float64(b.N) / readerDuration.Seconds()
+	readerNsPerOp := float64(readerDuration.Nanoseconds()) / float64(b.N)
+
+	b.ReportMetric(readerNsPerOp, "reader-ns/op")
+	b.ReportMetric(readerOpsPerSec, "reader-ops/s")
 }
 
-func BenchmarkFalseSharing_Pad128(b *testing.B) {
-	// Reset worker ID counter
-	workerID.Store(-1)
+func BenchmarkDirectBuffer_Small_CloseLag(b *testing.B) {
+	benchmarkDirectBufferAccess[SmallEvent](b, 10)
+}
 
-	// Allocate enough slots for all potential workers
-	slots := make([]Pad128, 1024)
+func BenchmarkDirectBuffer_Small_FarLag(b *testing.B) {
+	benchmarkDirectBufferAccess[SmallEvent](b, 1000)
+}
 
-	b.RunParallel(func(pb *testing.PB) {
-		// Assign a unique slot to this worker
-		id := workerID.Add(1)
-		mySlot := &slots[id]
+func BenchmarkDirectBuffer_Large_CloseLag(b *testing.B) {
+	benchmarkDirectBufferAccess[LargeEvent](b, 10)
+}
 
-		for pb.Next() {
-			mySlot.cursor.Add(1)
-		}
-	})
+func BenchmarkDirectBuffer_Padded_CloseLag(b *testing.B) {
+	benchmarkDirectBufferAccess[VeryLargeEvent](b, 10)
+}
+
+func BenchmarkDirectBuffer_Padded_FarLag(b *testing.B) {
+	benchmarkDirectBufferAccess[VeryLargeEvent](b, 1000)
 }

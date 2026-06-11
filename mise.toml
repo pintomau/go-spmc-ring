@@ -1,2 +1,58 @@
 [tools]
 go = "1.26"
+
+# Single entry point for every documented test/bench command.
+# CI intentionally uses raw go invocations; keep these and the workflows
+# in sync by hand (the workflows reference only trivial commands).
+
+[tasks.test]
+description = "Fast suite: functional tests only (~10 s)"
+run = "go test -short ./..."
+
+[tasks."test:full"]
+description = "Everything: functional + simulation + latency (~5 min)"
+run = "go test ./..."
+
+[tasks."test:sim"]
+description = "Simulation suite (~3 min at 100 checks; RAPID_CHECKS=n scales, RAPID_SEED=n replays a run, failfiles in testdata/rapid/ replay automatically)"
+run = "go test -run Simulation -timeout 12m ."
+
+[tasks."test:latency"]
+description = "Latency harness, 10 s+ per test (~2 min)"
+run = "go test -run TestLatency -v ."
+
+[tasks."test:simd"]
+description = "SIMD example (Go 1.26+ amd64, GOEXPERIMENT=simd)"
+run = "GOEXPERIMENT=simd go test -run ExampleRingBuffer_Reserve -v ."
+
+[tasks.bench]
+description = "Quick smoke over all benchmarks (~2 min)"
+run = "go test -run '^$' -bench=. -benchtime=100ms ."
+
+[tasks."bench:core"]
+description = "Reproduce the PERFORMANCE.md core publish table (long)"
+run = "go test -run '^$' -bench 'BenchmarkRingBuffer_(Publish$|Publish_NoReaders$|Publish_Direct$|PublishBatch$|PublishBatchFunc$|Reserve$)' -count=10 ."
+
+[tasks."bench:multireader"]
+description = "Reproduce the PERFORMANCE.md multi-reader scaling table (long)"
+run = "go test -run '^$' -bench 'BenchmarkRingBuffer_Publish_MultiReader$' -count=10 ."
+
+[tasks."bench:pipeline"]
+description = "Reproduce the PERFORMANCE.md pipeline table (long)"
+run = "go test -run '^$' -bench '^BenchmarkPipeline' -benchtime=1s -count=10 ."
+
+[tasks."bench:readview"]
+description = "Reproduce the PERFORMANCE.md ReadView table (long)"
+run = "go test -run '^$' -bench 'BenchmarkReadView' -count=10 ."
+
+[tasks."bench:falsesharing"]
+description = "False-sharing families with forced 64-byte cache line"
+run = "go test -run '^$' -bench 'FalseSharing|BenchmarkBuffer_|BenchmarkDirectBuffer' -tags cache64 ."
+
+[tasks.vet]
+description = "go vet"
+run = "go vet ./..."
+
+[tasks.lint]
+description = "golangci-lint (must be installed)"
+run = "golangci-lint run"
