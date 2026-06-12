@@ -33,6 +33,35 @@ run = "go test -run '^$' -bench=. -benchtime=100ms ."
 description = "Reproduce the PERFORMANCE.md core publish table (long)"
 run = "go test -run '^$' -bench 'BenchmarkRingBuffer_(Publish$|Publish_NoReaders$|Publish_Direct$|PublishBatch$|PublishBatchFunc$|Reserve$)' -count=10 ."
 
+[tasks."bench:pgo"]
+description = "PGO A/B of the core publish table: fresh profile, interleaved baseline/PGO runs, benchstat summary (~8 min)"
+run = """
+set -eu
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+bench='BenchmarkRingBuffer_(Publish$|Publish_NoReaders$|Publish_Direct$|PublishBatch$|PublishBatchFunc$|Reserve$)'
+echo '# collecting CPU profile from the core bench family (~1 min)...'
+go test -run '^$' -bench "$bench" -count=3 -cpuprofile="$tmp/core.pprof" . > /dev/null
+echo '# building baseline and PGO test binaries...'
+go test -c -pgo=off -o "$tmp/nopgo.test" .
+go test -c -pgo="$tmp/core.pprof" -o "$tmp/pgo.test" .
+echo '# 10 interleaved baseline/PGO rounds (~6 min); drift hits both arms, not one'
+i=1
+while [ "$i" -le 10 ]; do
+  "$tmp/nopgo.test" -test.run '^$' -test.bench "$bench" >> "$tmp/nopgo.txt"
+  "$tmp/pgo.test"   -test.run '^$' -test.bench "$bench" >> "$tmp/pgo.txt"
+  echo "round $i/10 done"
+  i=$((i + 1))
+done
+echo
+echo '# benchstat: baseline (-pgo=off) vs PGO'
+if command -v benchstat > /dev/null 2>&1; then
+  benchstat "$tmp/nopgo.txt" "$tmp/pgo.txt"
+else
+  go run golang.org/x/perf/cmd/benchstat@latest "$tmp/nopgo.txt" "$tmp/pgo.txt"
+fi
+"""
+
 [tasks."bench:multireader"]
 description = "Reproduce the PERFORMANCE.md multi-reader scaling table (long)"
 run = "go test -run '^$' -bench 'BenchmarkRingBuffer_Publish_MultiReader$' -count=10 ."

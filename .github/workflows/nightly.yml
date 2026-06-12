@@ -6,8 +6,8 @@ on:
   workflow_dispatch:        # manual trigger (e.g. before a release)
     inputs:
       checks:
-        description: 'Number of rapid cases per test'
-        default: '5000'
+        description: 'Override RAPID_CHECKS for every test (empty = per-test defaults)'
+        default: ''
         required: false
 
 jobs:
@@ -30,8 +30,23 @@ jobs:
     needs: build-and-vet
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Per-case cost differs by ~190x across properties, so each test gets
+        # its own check budget, sized to roughly 30-40 runner minutes
+        # (measured 2026-06-12: 1.6 s/case, 190 ms/case, 120 ms/case, 8.5 ms/case).
+        include:
+          - test: TestRingBuffer_Simulation
+            checks: '500'
+          - test: TestBitmapReaderPool_Simulation
+            checks: '5000'
+          - test: TestPipeline_Simulation
+            checks: '5000'
+          - test: TestRingBuffer_BatchSimulation
+            checks: '50000'
     env:
-      RAPID_CHECKS: ${{ github.event.inputs.checks || '5000' }}
+      RAPID_CHECKS: ${{ github.event.inputs.checks || matrix.checks }}
     steps:
       - uses: actions/checkout@v6
 
@@ -40,8 +55,16 @@ jobs:
           go-version: stable
           cache: true
 
-      - name: Run simulation tests
-        run: go test -v -run Simulation -timeout 50m .
+      - name: Run simulation test
+        run: go test -v -run '^${{ matrix.test }}$' -timeout 55m .
+
+      - name: Upload rapid failfiles
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapid-failfiles-${{ matrix.test }}
+          path: testdata/rapid/
+          if-no-files-found: ignore
 
   benchmarks:
     runs-on: ubuntu-latest

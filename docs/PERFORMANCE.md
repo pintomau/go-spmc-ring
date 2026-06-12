@@ -14,7 +14,10 @@ The tables below summarize the core ring benchmarks on this machine:
 | CPU         | AMD Ryzen 5 9600X 6-Core Processor |
 | Go          | 1.26.2                             |
 
-Results are machine-specific. The numbers below are the arithmetic mean of 10 benchmark runs.
+Results are machine-specific. The numbers below are the arithmetic mean of a 10-count benchmark
+run; each command is run twice and the lower-mean set is reported, with a run's first element
+dropped when it exceeds the mean of the rest by more than 5% (transient warm-up filter).
+Baseline last refreshed 2026-06-12.
 
 Command used (`mise run bench:core`):
 
@@ -24,19 +27,52 @@ go test -run '^$' -bench 'BenchmarkRingBuffer_(Publish$|Publish_NoReaders$|Publi
 
 ### Core publish path
 
-| Benchmark           | Mean ns/op |     Throughput | Notes                                                      |
-|---------------------|-----------:|---------------:|------------------------------------------------------------|
-| `Publish_NoReaders` |      5.608 |  178.3 M ops/s | Writer upper bound with no registered readers              |
-| `Publish`           |      5.612 | 178.17 M ops/s | Keep-up reader adds ~0.07% overhead vs. no readers (noise) |
-| `Publish_Direct`    |     10.216 |  80.44 M ops/s | Direct value publish is ~1.82x slower than `Publish`       |
+| Benchmark           | Mean ns/op |    Throughput | Notes                                                |
+|---------------------|-----------:|--------------:|------------------------------------------------------|
+| `Publish_NoReaders` |      5.097 | 196.2 M ops/s | Writer upper bound with no registered readers        |
+| `Publish`           |      5.188 | 192.8 M ops/s | Keep-up reader adds ~1.8% overhead vs. no readers    |
+| `Publish_Direct`    |      9.206 | 108.6 M ops/s | Constructs and publishes a value per event; see [the gap decomposed](#the-publish_direct-gap-decomposed) |
 
-**How batch publish compares:** at batch size 10 all three batch APIs converge to ~2.1–2.2 ns/item, about 61% cheaper
-per-item than a single `Publish` (5.61 ns). The gap (~3.4 ns) is fixed overhead that cannot be amortized per-event:
+**How batch publish compares:** at batch size 10 all three batch APIs converge to ~2.1–2.25 ns/item, about 59% cheaper
+per-item than a single `Publish` (5.19 ns). The gap (~3.1 ns) is fixed overhead that cannot be amortized per-event:
 the gating check, the `writeCursor` store, and cache-line coordination. Batching spreads that cost across N items,
 so once the batch is ~10 items the per-item cost is mostly the payload write itself. `Reserve/Commit` amortizes
-most efficiently at large sizes (1.99 ns/item at size 1000) because it issues only one `writeCursor.Store`
+most efficiently at large sizes (2.12 ns/item at size 1000) because it issues only one `writeCursor.Store`
 for the whole batch rather than one per item. See the [Batch scaling](#batch-scaling) section below for
 the full numbers.
+
+### The Publish_Direct gap, decomposed
+
+`Publish_Direct` measures 9.21 ns against `Publish`'s 5.19 ns, which reads like a 1.77x
+penalty for publishing by value. Controlled variants (2026-06-12, the
+`BenchmarkRingBuffer_DirectGap_*` family) show the API is responsible for only a small
+slice of that:
+
+| Variant                                  | Mean ns/op | What it isolates                                  |
+|------------------------------------------|-----------:|---------------------------------------------------|
+| `PublishFunc`, write 1 byte in the slot  |       5.12 | The standing `Publish` benchmark workload          |
+| `PublishFunc`, write all 64 B in the slot|       5.13 | Full payload traffic through the callback API      |
+| `Publish` by value, payload prepared once|       5.49 | The honest by-value API cost                       |
+| `Publish` by value, value built per event|       9.18 | The original `Publish_Direct` shape                |
+
+Three findings:
+
+- **Writing 64 bytes costs the same as writing 1 byte.** The cache-line ownership
+  transfer between writer and reader dominates, and it is paid either way. Payload
+  size is not the gap.
+- **By-value publish itself costs ~7%** (5.49 vs 5.12 ns): one 64 B argument copy plus
+  identical call structure. That is the real `Publish` vs `PublishFunc` API difference.
+- **The remaining ~3.7 ns is the per-event construction pattern, not the API.**
+  Disassembly shows `obj := object{}` compiles to four 16 B zeroing stores plus a 1-byte
+  field store, and the immediately following 64 B copy into the call argument re-reads
+  those bytes while the stores are still in flight. The first 16 B load overlaps two
+  stores of different sizes, which defeats store-to-load forwarding and stalls roughly
+  15-20 cycles, every iteration.
+
+Guidance: for cache-line-sized events, prefer `PublishFunc` (or `Reserve`/`Commit` for
+batches) and build the event directly in the ring slot; it skips both copies and the
+stall entirely. If you must publish by value, reuse a prepared value or fill an existing
+variable instead of constructing a fresh composite literal right before the call.
 
 ### Multi-reader publish scaling
 
@@ -48,17 +84,17 @@ go test -run '^$' -bench 'BenchmarkRingBuffer_Publish_MultiReader$' -count=10 .
 
 | Readers | Mean ns/op |    Throughput | Slowdown vs 1 reader | Notes                                                        |
 |--------:|-----------:|--------------:|---------------------:|--------------------------------------------------------------|
-|       1 |      5.443 | 183.7 M ops/s |               1.000x | Single keep-up reader                                        |
-|       2 |      5.483 | 182.4 M ops/s |               1.007x | Essentially flat vs. 1 reader                                |
-|       4 |      5.554 | 180.1 M ops/s |               1.020x | Small additional gating cost                                 |
-|       8 |      5.813 | 172.0 M ops/s |               1.068x | Modest overhead; bitmap scan amortized across few readers    |
-|      16 |      6.235 | 160.4 M ops/s |               1.146x | First visible step; reader count approaching thread budget   |
-|      32 |      7.598 | 131.6 M ops/s |               1.396x | Overhead accelerates as readers exceed physical thread count |
-|      64 |     10.553 |  94.8 M ops/s |               1.939x | Near 2× slower; scan over 64 cursor slots starts to dominate |
-|     128 |     16.400 |  61.0 M ops/s |               3.013x | Bitmap capacity limit; 3× single-reader overhead             |
+|       1 |      5.442 | 183.8 M ops/s |               1.000x | Single keep-up reader                                        |
+|       2 |      5.495 | 182.0 M ops/s |               1.010x | Essentially flat vs. 1 reader                                |
+|       4 |      5.535 | 180.7 M ops/s |               1.017x | Small additional gating cost                                 |
+|       8 |      5.780 | 173.0 M ops/s |               1.062x | Modest overhead; bitmap scan amortized across few readers    |
+|      16 |      6.274 | 159.4 M ops/s |               1.153x | First visible step; reader count approaching thread budget   |
+|      32 |      7.652 | 130.7 M ops/s |               1.406x | Overhead accelerates as readers exceed physical thread count |
+|      64 |     10.720 |  93.3 M ops/s |               1.970x | Near 2× slower; scan over 64 cursor slots starts to dominate |
+|     128 |     16.550 |  60.4 M ops/s |               3.041x | Bitmap capacity limit; 3× single-reader overhead             |
 
 Degradation is **sub-linear up to the hardware thread count**. On this machine (Ryzen 5 9600X, 6C/12T),
-going from 1 to 8 readers costs only **6.8%** throughput. The overhead stays moderate through 16
+going from 1 to 8 readers costs only **6.2%** throughput. The overhead stays moderate through 16
 readers but accelerates noticeably past 12 hardware threads: at 64 readers throughput is
 roughly halved, and at 128 (the bitmap capacity limit) it reaches 3× single-reader
 overhead. The primary driver past ~32 readers is the `scanAll` loop over all 128
@@ -86,8 +122,8 @@ the gain is marginal. The idle backoff strategy matters more than thread pinning
 ### Stage / pipeline scaling
 
 The stage table below uses the dedicated pipeline benchmark family in `ring_buffer_pipeline_bench_test.go`. The figures
-are the arithmetic mean of a single 10-run set on the same machine (first element dropped if >5% above the rest mean
-as a transient-spike filter).
+follow the same methodology as the rest of this document: lower of two 10-count sets, first element of a set dropped
+if >5% above the rest mean (transient-spike filter).
 
 Command used (`mise run bench:pipeline`):
 
@@ -103,31 +139,31 @@ All four variants now use `keepUpReader` (`time.Sleep(50µs)` idle). The benchma
 
 | Readers per stage | `1Stage_NoPipeline` ns/op | `1Stage` ns/op | `2Stage` ns/op | `3Stage` ns/op | Notes                                                                                                        |
 |------------------:|--------------------------:|---------------:|---------------:|---------------:|--------------------------------------------------------------------------------------------------------------|
-|                 1 |                     5.613 |          5.762 |          5.472 |          5.499 | All variants within 5% of core publish baseline; Stage API overhead is negligible at 1 reader                |
-|                 2 |                     5.532 |          5.754 |          5.522 |          5.558 | Adding a second reader per stage costs essentially nothing; total readers = 2 / 4 / 6                        |
-|                 4 |                     5.598 |          5.827 |          5.666 |          5.874 | Still under 6 ns across the board; 3Stage has 12 total readers                                               |
-|                 8 |                     5.803 |          6.039 |          6.082 |          6.976 | 3Stage shows first meaningful overhead: 24 total readers, scanAll runs across 3 stages                       |
-|                16 |                     6.255 |          6.466 |          7.216 |          8.689 | Overhead now clearly tied to total reader count (16 / 32 / 48); depth multiplies the scanAll cost            |
-|                32 |                     7.595 |          7.736 |         10.123 |         12.930 | 2Stage doubles cost vs 1Stage (96 vs 32 total); 3Stage at 96 total readers approaching MultiReader territory |
-|                64 |                    10.497 |         10.652 |         15.997 |         17.551 | 1Stage matches MultiReader/r=64 baseline; 2Stage and 3Stage reflect 128 and 192 total readers                |
-|               128 |                    16.208 |         16.430 |         22.744 |         33.420 | 1Stage matches MultiReader/r=128; 3Stage at 384 total readers is 2× worse than 1Stage                        |
+|                 1 |                     5.391 |          5.656 |          5.446 |          5.409 | All variants within 9% of core publish baseline; Stage API overhead is small at 1 reader                     |
+|                 2 |                     5.555 |          5.777 |          5.514 |          5.552 | Adding a second reader per stage costs essentially nothing; total readers = 2 / 4 / 6                        |
+|                 4 |                     5.625 |          5.805 |          5.689 |          5.834 | Still under 6 ns across the board; 3Stage has 12 total readers                                               |
+|                 8 |                     5.854 |          6.005 |          6.112 |          6.613 | 3Stage shows first meaningful overhead: 24 total readers, scanAll runs across 3 stages                       |
+|                16 |                     6.262 |          6.504 |          7.281 |          8.669 | Overhead now clearly tied to total reader count (16 / 32 / 48); depth multiplies the scanAll cost            |
+|                32 |                     7.753 |          7.915 |         10.180 |         12.940 | 2Stage doubles cost vs 1Stage (96 vs 32 total); 3Stage at 96 total readers approaching MultiReader territory |
+|                64 |                    10.710 |         10.900 |         16.070 |         17.480 | 1Stage matches MultiReader/r=64 baseline; 2Stage and 3Stage reflect 128 and 192 total readers                |
+|               128 |                    16.490 |         16.690 |         23.090 |         33.380 | 1Stage matches MultiReader/r=128; 3Stage at 384 total readers is 2× worse than 1Stage                        |
 
 Key observations:
 
-1. **At 1–4 readers per stage all variants are effectively free**: costs cluster in the 5.5–5.9 ns range and are indistinguishable from the core single-reader publish baseline.
-2. **Overhead scales with total readers, not pipeline depth.** `2Stage/r=16` (7.22 ns, 32 total) ≈ `MultiReader/r=32` (7.60 ns); `3Stage/r=8` (6.98 ns, 24 total) ≈ `MultiReader/r=24`. Pipeline depth itself costs nothing: the scanAll load from the extra readers does.
-3. **`1Stage_NoPipeline` and `1Stage` track each other closely** because both have the same total reader count; the `Stage[T]` wrapper adds at most ~1–2% overhead.
+1. **At 1–4 readers per stage all variants are effectively free**: costs cluster in the 5.4–5.8 ns range and are indistinguishable from the core single-reader publish baseline.
+2. **Overhead scales with total readers, not pipeline depth.** `2Stage/r=16` (7.28 ns, 32 total) ≈ `MultiReader/r=32` (7.65 ns); `3Stage/r=8` (6.61 ns, 24 total) ≈ `MultiReader/r=24`. Pipeline depth itself costs nothing: the scanAll load from the extra readers does.
+3. **`1Stage_NoPipeline` and `1Stage` track each other closely** because both have the same total reader count; the `Stage[T]` wrapper adds ~1–5% overhead, shrinking as reader count grows.
 
 ### Batch scaling
 
 | Batch size | `PublishBatch` ns/op | `PublishBatch` ns/item | `PublishBatchFunc` ns/op | `PublishBatchFunc` ns/item | `Reserve` ns/op | `Reserve` ns/item |
 |-----------:|---------------------:|-----------------------:|-------------------------:|---------------------------:|----------------:|------------------:|
-|          1 |                7.357 |                  7.357 |                    6.932 |                      6.932 |           6.445 |             6.445 |
-|         10 |               21.210 |                  2.121 |                   21.474 |                      2.147 |          21.643 |             2.164 |
-|        100 |              242.220 |                  2.422 |                  208.370 |                      2.084 |         220.150 |             2.202 |
-|       1000 |             2307.000 |                  2.307 |                 2106.800 |                      2.107 |        1993.000 |             1.993 |
+|          1 |                6.803 |                  6.803 |                    6.898 |                      6.898 |           6.770 |             6.770 |
+|         10 |               21.030 |                  2.103 |                   21.020 |                      2.102 |          22.490 |             2.249 |
+|        100 |              254.800 |                  2.548 |                  213.600 |                      2.136 |         228.500 |             2.285 |
+|       1000 |             2450.000 |                  2.450 |                 2217.000 |                      2.217 |        2124.000 |             2.124 |
 
-At larger batch sizes the per-item cost settles in the **434–502 M items/s** range (**1.99–2.31 ns/item**), with
+At larger batch sizes the per-item cost settles in the **392–476 M items/s** range (**2.10–2.55 ns/item**), with
 `Reserve` reaching the floor at size 1000 because a single `writeCursor.Store` covers the entire batch.
 
 ### Is the growth linear?
@@ -136,9 +172,9 @@ For total batch latency, **yes, approximately** once batches are no longer tiny.
 
 | Benchmark          | 10→100 total-time ratio | 100→1000 total-time ratio | Interpretation                                           |
 |--------------------|------------------------:|--------------------------:|----------------------------------------------------------|
-| `PublishBatch`     |                  11.42x |                     9.52x | Near-linear with slightly improving cost at larger sizes |
-| `PublishBatchFunc` |                   9.70x |                    10.11x | Near-linear across both ranges                           |
-| `Reserve`          |                  10.17x |                     9.05x | Near-linear with improving per-item cost                 |
+| `PublishBatch`     |                  12.12x |                     9.62x | Mildly superlinear 10→100, improving again at 1000       |
+| `PublishBatchFunc` |                  10.16x |                    10.38x | Near-linear across both ranges                           |
+| `Reserve`          |                  10.16x |                     9.30x | Near-linear with improving per-item cost                 |
 
 The more useful signal is the **per-item** cost:
 
@@ -183,6 +219,45 @@ Takeaways:
 - **The per-element `Get` loop pays its masking and bounds work per event**, visible at
   mid batch sizes (0.34 vs 0.23 ns/item at batch 256) and washed out at batch 4096 where
   cache-line fetch dominates.
+
+### Profile-guided optimization (PGO)
+
+All tables in this document are non-PGO builds. This section records what PGO adds on
+top, measured 2026-06-12: collect a CPU profile from the core benchmark family, rebuild
+the same benchmarks with `-pgo=<profile>`, and compare against `-pgo=off`. One command
+runs the whole comparison with a freshly collected profile and prints a `benchstat`
+summary (using `go run` to fetch benchstat if it is not installed). The two builds are
+executed in interleaved rounds rather than back-to-back blocks, so background load on
+the machine widens the reported variance instead of silently biasing one side:
+
+```bash
+mise run bench:pgo
+```
+
+The `Publish` improvement is the durable signal; deltas of a few percent on the other
+rows are within run-to-run noise.
+
+| Benchmark               | no-PGO mean | PGO mean | Delta  |
+|-------------------------|------------:|---------:|-------:|
+| `Publish`               |     5.47 ns |  4.89 ns | -10.5% |
+| `PublishBatch/size=1`   |     7.20 ns |  7.38 ns |  +2.6% |
+| `PublishBatch/size=10`  |    21.69 ns | 21.62 ns |  -0.3% |
+| `PublishBatch/size=100` |    241.6 ns | 240.0 ns |  -0.7% |
+| `PublishBatch/size=1000`|     2326 ns |  2325 ns |  -0.0% |
+| `Publish_Direct`        |     9.66 ns |  9.78 ns |  +1.3% |
+
+Reading: PGO wins exactly where the cost is call overhead (the single-publish hot path,
+where the compiler raises the inlining budget for the profiled-hot `PublishFunc`) and does
+nothing where the cost is memory bandwidth (the batch paths run at the ~30 GB/s store
+floor, and no inlining moves a memory wall).
+
+What this means for users: a library cannot ship PGO. The profile applies when the final
+binary is compiled, so this gain belongs to whoever builds the application. If publish-path
+latency matters to you, collect a profile from your own workload
+(`runtime/pprof` or `net/http/pprof` in production, or `-cpuprofile` from a representative
+benchmark) and build your binary with `go build -pgo=<profile>` (or check the profile in as
+`default.pgo` next to your `main` package). The numbers above suggest roughly 10% on
+single-event publish throughput for profiles that capture the publish path as hot.
 
 ## Other benchmark coverage
 

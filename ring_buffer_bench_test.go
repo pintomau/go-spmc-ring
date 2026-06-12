@@ -172,6 +172,91 @@ func BenchmarkRingBuffer_Publish_Direct(b *testing.B) {
 	}
 }
 
+// The DirectGap family decomposes the Publish_Direct vs Publish gap (see the
+// PERFORMANCE.md section "The Publish_Direct gap, decomposed"): payload size
+// is free (line ownership dominates), by-value costs ~7%, and the rest of
+// Publish_Direct's gap is the per-event composite-literal construction, whose
+// mixed-size stores defeat store-to-load forwarding on the argument copy.
+
+// Publish with a value prepared once outside the loop: isolates the by-value
+// API cost (arg copy + slot copy) from per-iteration construction.
+func BenchmarkRingBuffer_DirectGap_Publish_Prepared(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const capacity = 1 << 22
+	rb, err := NewRingBuffer[object](ctx, capacity)
+	if err != nil {
+		b.Fatal(err)
+	}
+	rb.barrier.AddReader(keepUpReader)
+
+	var payload object
+	payload.x[0] = '0'
+	for b.Loop() {
+		rb.Publish(payload)
+	}
+}
+
+// PublishFunc writing the full 64 B payload: same memory traffic into the
+// ring as Publish, through the callback API.
+func BenchmarkRingBuffer_DirectGap_PublishFunc_FullFill(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const capacity = 1 << 22
+	rb, err := NewRingBuffer[object](ctx, capacity)
+	if err != nil {
+		b.Fatal(err)
+	}
+	rb.barrier.AddReader(keepUpReader)
+
+	var payload object
+	payload.x[0] = '0'
+	fill := func(o *object) { *o = payload }
+	for b.Loop() {
+		rb.PublishFunc(fill)
+	}
+}
+
+// The Publish_Direct shape (zero + construct + publish by value) against
+// keepUpReader so all DirectGap variants share a reader.
+func BenchmarkRingBuffer_DirectGap_Publish_Constructed(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const capacity = 1 << 22
+	rb, err := NewRingBuffer[object](ctx, capacity)
+	if err != nil {
+		b.Fatal(err)
+	}
+	rb.barrier.AddReader(keepUpReader)
+
+	for b.Loop() {
+		obj := object{}
+		obj.x[0] = '0'
+		rb.Publish(obj)
+	}
+}
+
+// PublishFunc writing 1 byte (the standing Publish bench workload), with
+// keepUpReader, as the in-family floor reference.
+func BenchmarkRingBuffer_DirectGap_PublishFunc_OneByte(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const capacity = 1 << 22
+	rb, err := NewRingBuffer[object](ctx, capacity)
+	if err != nil {
+		b.Fatal(err)
+	}
+	rb.barrier.AddReader(keepUpReader)
+
+	for b.Loop() {
+		rb.PublishFunc(produce)
+	}
+}
+
 func BenchmarkRingBuffer_Publish_BatchReader(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

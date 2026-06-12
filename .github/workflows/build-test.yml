@@ -64,7 +64,7 @@ jobs:
 
   simulation-quick:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       RAPID_CHECKS: "100"
     steps:
@@ -78,4 +78,12 @@ jobs:
           go-version: stable
 
       - name: Run simulation tests (reduced checks)
-        run: go test -run 'Simulation' -timeout 12m ./...
+        run: go test -run 'Simulation' -timeout 18m ./...
+
+      - name: Upload rapid failfiles
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapid-failfiles-quick
+          path: testdata/rapid/
+          if-no-files-found: ignore

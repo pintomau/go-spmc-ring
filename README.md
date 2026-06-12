@@ -11,8 +11,8 @@ classic Disruptor, where the consumer graph is wired once before the first event
 [join and leave a live stream at runtime](#adding-and-removing-readers-at-runtime) without locks,
 allocations, or writer stalls.
 
-On a Ryzen 5 9600X (Linux, Go 1.26): a single publish takes **~5.6 ns** (≈178 M ops/s), batched
-publishes reach **~2 ns/item** (≈500 M items/s), and eight concurrent readers cost the writer less
+On a Ryzen 5 9600X (Linux, Go 1.26): a single publish takes **~5.2 ns** (≈193 M ops/s), batched
+publishes reach **~2.1 ns/item** (≈476 M items/s), and eight concurrent readers cost the writer less
 than 7%. Full measurements are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 ## Why it's fast
@@ -27,7 +27,7 @@ than 7%. Full measurements are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - **Cached gating.** The writer caches the slowest reader's position and only rescans all cursors
   when that cache is exhausted or the reader bitmap changes, keeping the common case scan-free.
 - **Batch primitives.** `Reserve`/`Commit` exposes the ring's backing array directly and makes an
-  entire batch visible with a single atomic store, amortizing the fixed publish overhead to ~2 ns/item.
+  entire batch visible with a single atomic store, amortizing the fixed publish overhead to ~2.1 ns/item.
 - **Devirtualized waiting.** Wait strategies are a `uint8` switch rather than an interface, so the
   backpressure loop pays no dynamic-dispatch cost.
 
@@ -193,8 +193,8 @@ or vector processing. All read paths are allocation-free, wrapping included (see
 
 ### Publishing in batches
 
-Single-item `Publish` pays a fixed ~3.4 ns of gating and cursor-store overhead per call; batching
-amortizes it (~2 ns/item at batch ≥ 10, see [Batch scaling](docs/PERFORMANCE.md#batch-scaling)).
+Single-item `Publish` pays a fixed ~3.1 ns of gating and cursor-store overhead per call; batching
+amortizes it (~2.1 ns/item at batch ≥ 10, see [Batch scaling](docs/PERFORMANCE.md#batch-scaling)).
 
 ```go
 // Copy a prepared slice:
@@ -297,9 +297,9 @@ Headline numbers on a Ryzen 5 9600X (6C/12T, Linux, Go 1.26.2), arithmetic mean 
 
 | Measurement | Result |
 |-------------|--------|
-| Single `Publish` | 5.6 ns/op (178 M ops/s) |
-| Batch publish, size ≥ 10 | 2.0–2.3 ns/item (434–502 M items/s) |
-| 8 concurrent readers | +6.8% writer cost vs. 1 reader |
+| Single `Publish` | 5.2 ns/op (193 M ops/s) |
+| Batch publish, size ≥ 10 | 2.1–2.55 ns/item (392–476 M items/s) |
+| 8 concurrent readers | +6.2% writer cost vs. 1 reader |
 | 128 readers (capacity limit) | 3× single-reader cost |
 | Pipeline depth (2–3 stages, ≤4 readers each) | within noise of single-stage |
 | Best end-to-end p99 (burst workload) | 13.2µs (Yield wait, batch polling) |
@@ -334,7 +334,7 @@ including how the picture changes at p99.9 and beyond, are in
 
 ### Other findings worth knowing
 
-- **Batching pays for itself by size 10.** The ~3.4 ns fixed cost per publish (gating check plus
+- **Batching pays for itself by size 10.** The ~3.1 ns fixed cost per publish (gating check plus
   cursor store) amortizes away; past size 10, per-item cost is mostly the payload write.
 - **Reader scaling is sub-linear up to the hardware thread count**, then degrades as the writer's
   full cursor scan starts to dominate.
@@ -347,8 +347,9 @@ including how the picture changes at p99.9 and beyond, are in
 
 - **Property-based simulation** ([`pgregory.net/rapid`](https://pkg.go.dev/pgregory.net/rapid)):
   randomized writers, batch sizes, and reader add/remove churn are checked against ordering and
-  visibility invariants. The full suite runs in minutes locally; a nightly CI job runs 5,000 cases
-  per property.
+  visibility invariants. The full suite runs in minutes locally; a nightly CI job runs each
+  property at a check budget sized to its cost, from hundreds of cases for the heaviest
+  property to tens of thousands for the cheapest.
 - **Deterministic replay.** When a simulation fails, rapid saves a failfile under
   `testdata/rapid/` and the next test run replays it automatically; a specific run can be
   reproduced with `RAPID_SEED=<seed> go test -run Simulation .`.
