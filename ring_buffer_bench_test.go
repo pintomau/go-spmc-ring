@@ -366,6 +366,13 @@ func keepUpReader(ctx context.Context, readView ReadView[object], readerCursor *
 	}
 }
 
+// Batch-publish benchmarks. NOTE: these do NOT all do equal per-slot work, so
+// compare per-item ns across them with care. PublishBatch copies whole objects
+// (copy()/memmove); PublishBatchFunc and Reserve below write only one byte per
+// slot. On arm64 a sub-line write into a cold slot pays a write-allocate (RFO)
+// the full-line copy avoids, so the 1-byte variants look artificially slow. The
+// *_Fill variants do the equal-work (full-slot) comparison; see PERFORMANCE.md
+// "Batch scaling".
 func BenchmarkRingBuffer_PublishBatch(b *testing.B) {
 	for _, size := range batchSizes {
 		b.Run(fmt.Sprintf("size=%d", size), func(b *testing.B) {
@@ -442,6 +449,74 @@ func BenchmarkRingBuffer_Reserve(b *testing.B) {
 					seg2[j].x[0] = '0'
 				}
 				rb.Commit(claim)
+			}
+			b.StopTimer()
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/float64(size), "ns/item")
+		})
+	}
+}
+
+// Reserve_Fill is BenchmarkRingBuffer_Reserve with a full-slot fill
+// (seg[j] = payload, a whole-object copy per slot) instead of the 1-byte fill.
+// Paired with PublishBatchFunc_Fill it equalizes per-slot memory traffic across
+// the in-place APIs, so the per-item number reflects API/access-pattern cost
+// rather than fill size. Contrast with PublishBatch, which fills via a single
+// bulk copy(); see PERFORMANCE.md "Batch scaling".
+func BenchmarkRingBuffer_Reserve_Fill(b *testing.B) {
+	for _, size := range batchSizes {
+		b.Run(fmt.Sprintf("size=%d", size), func(b *testing.B) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			const capacity = 1 << 22
+			rb, err := NewRingBuffer[object](ctx, capacity)
+			if err != nil {
+				b.Fatal(err)
+			}
+			rb.barrier.AddReader(keepUpReader)
+
+			var payload object
+			payload.x[0] = '0'
+
+			b.ResetTimer()
+			for b.Loop() {
+				seg1, seg2, claim := rb.Reserve(size)
+				for j := range seg1 {
+					seg1[j] = payload
+				}
+				for j := range seg2 {
+					seg2[j] = payload
+				}
+				rb.Commit(claim)
+			}
+			b.StopTimer()
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/float64(size), "ns/item")
+		})
+	}
+}
+
+// PublishBatchFunc_Fill is BenchmarkRingBuffer_PublishBatchFunc with a full-slot
+// fill (*slot = payload) instead of the 1-byte fill. See Reserve_Fill.
+func BenchmarkRingBuffer_PublishBatchFunc_Fill(b *testing.B) {
+	for _, size := range batchSizes {
+		b.Run(fmt.Sprintf("size=%d", size), func(b *testing.B) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			const capacity = 1 << 22
+			rb, err := NewRingBuffer[object](ctx, capacity)
+			if err != nil {
+				b.Fatal(err)
+			}
+			rb.barrier.AddReader(keepUpReader)
+
+			var payload object
+			payload.x[0] = '0'
+			fill := func(i int64, slot *object) { *slot = payload }
+
+			b.ResetTimer()
+			for b.Loop() {
+				rb.PublishBatchFunc(size, fill)
 			}
 			b.StopTimer()
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/float64(size), "ns/item")

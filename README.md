@@ -13,7 +13,8 @@ allocations, or writer stalls.
 
 On a Ryzen 5 9600X (Linux, Go 1.26): a single publish takes **~5.2 ns** (≈193 M ops/s), batched
 publishes reach **~2.1 ns/item** (≈476 M items/s), and eight concurrent readers cost the writer less
-than 7%. Full measurements are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+than 7%. On an Apple M4 Pro (macOS) the same publish is **~7.3 ns** and eight readers cost under 2%.
+Full measurements for both architectures are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 ## Why it's fast
 
@@ -293,19 +294,24 @@ in [Throughput vs latency](#throughput-vs-latency-choosing-spin-yield-and-sleep)
 
 ## Performance
 
-Headline numbers on a Ryzen 5 9600X (6C/12T, Linux, Go 1.26.2), arithmetic mean of 10 runs:
+Headline numbers, arithmetic mean of 10 runs, on two machines — x86-64 (Ryzen 5 9600X, 6C/12T,
+Linux) and arm64 (Apple M4 Pro, 14C/14T, macOS), both Go 1.26.2:
 
-| Measurement | Result |
-|-------------|--------|
-| Single `Publish` | 5.2 ns/op (193 M ops/s) |
-| Batch publish, size ≥ 10 | 2.1–2.55 ns/item (392–476 M items/s) |
-| 8 concurrent readers | +6.2% writer cost vs. 1 reader |
-| 128 readers (capacity limit) | 3× single-reader cost |
-| Pipeline depth (2–3 stages, ≤4 readers each) | within noise of single-stage |
-| Best end-to-end p99 (burst workload) | 13.2µs (Yield wait, batch polling) |
+| Measurement | x86-64 (Ryzen) | arm64 (M4 Pro) |
+|-------------|----------------|----------------|
+| Single `Publish` | 5.2 ns/op (193 M ops/s) | 7.3 ns/op (138 M ops/s) |
+| Batch publish, size ≥ 10 | 2.1–2.55 ns/item (all APIs converge) | 1.76 ns/item floor (bulk `PublishBatch`; per-item cost is fill-pattern dependent) |
+| 8 concurrent readers | +6.2% writer cost vs. 1 reader | +1.5% vs. 1 reader |
+| 128 readers (capacity limit) | 3.0× single-reader cost | 2.4× single-reader cost |
+| Pipeline depth (2–3 stages, ≤4 readers each) | within noise of single-stage | within noise of single-stage |
+| Best end-to-end p99 (burst workload) | 13.2µs (Yield wait, batch poll) | 9.0µs (Hybrid wait, batch poll) |
 
-The full data, including multi-reader scaling, the `LockOSThread` study, batch-size sweeps, and the
-complete latency matrix with HDR percentiles, is in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+Absolute numbers capture the whole platform (CPU, scheduler, OS timer), not just the CPU — see the
+[per-section commentary](docs/PERFORMANCE.md) for where the two architectures diverge in *shape*
+(notably the `Reserve` vs `PublishBatch` ordering, the multi-reader cliff position, and the FixedRate
+`Spin` vs `Batch` poll recommendation). The full data, including multi-reader scaling, the
+`LockOSThread` study, batch-size sweeps, and the complete latency matrix with HDR percentiles, is in
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 ### Throughput vs latency: choosing spin, yield, and sleep
 

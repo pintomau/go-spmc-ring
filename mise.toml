@@ -62,6 +62,10 @@ else
 fi
 """
 
+[tasks."bench:fill"]
+description = "Full-slot-fill batch variants (equal byte-traffic with PublishBatch); see PERFORMANCE.md Batch scaling"
+run = "go test -run '^$' -bench 'BenchmarkRingBuffer_(Reserve_Fill|PublishBatchFunc_Fill)$' -count=10 ."
+
 [tasks."bench:multireader"]
 description = "Reproduce the PERFORMANCE.md multi-reader scaling table (long)"
 run = "go test -run '^$' -bench 'BenchmarkRingBuffer_Publish_MultiReader$' -count=10 ."
