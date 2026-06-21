@@ -16,7 +16,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Single source of truth: read the pinned tool versions out of mise.toml
       # (Python 3.11+ ships tomllib in the stdlib; ubuntu-latest has it).
