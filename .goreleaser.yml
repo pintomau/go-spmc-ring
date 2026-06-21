@@ -1,0 +1,12 @@
+version: 2
+
+builds:
+  - skip: true
+
+release:
+  github:
+    owner: pintomau
+    name: go-spmc-ring
+
+changelog:
+  use: github-native

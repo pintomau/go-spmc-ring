@@ -1,0 +1,89 @@
+[tools]
+go = "1.26"
+golangci-lint = "2.12"
+goreleaser = "2.16.0"
+
+[tasks.test]
+description = "Fast suite: functional tests only"
+run = "go test -short -v ./..."
+
+[tasks."test:full"]
+description = "Everything: functional + simulation + latency"
+run = "go test -v ./..."
+
+[tasks."test:sim"]
+description = "Simulation suite (~3 min at 100 checks; RAPID_CHECKS=n scales, RAPID_SEED=n replays a run, failfiles in testdata/rapid/ replay automatically)"
+run = "go test -run Simulation -timeout 12m -v ."
+
+[tasks."test:latency"]
+description = "Latency harness"
+run = "go test -run TestLatency -v ."
+
+[tasks."test:simd"]
+description = "SIMD example (Go 1.26+ amd64, GOEXPERIMENT=simd)"
+run = "GOEXPERIMENT=simd go test -run ExampleRingBuffer_Reserve -v ."
+
+[tasks.bench]
+description = "Quick smoke over all benchmarks"
+run = "go test -v -run '^$' -bench=. -benchtime=100ms ."
+
+[tasks."bench:core"]
+description = "Reproduce the PERFORMANCE.md core publish + batch-scaling tables, incl. the full-slot-fill variants"
+run = "go test -run '^$' -bench 'BenchmarkRingBuffer_(Publish$|Publish_NoReaders$|Publish_Direct$|PublishBatch$|PublishBatchFunc$|PublishBatchFunc_Fill$|Reserve$|Reserve_Fill$)' -count=10 ."
+
+[tasks."bench:pgo"]
+description = "PGO A/B of the core publish table: fresh profile, interleaved baseline/PGO runs, benchstat summary"
+run = """
+set -eu
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+bench='BenchmarkRingBuffer_(Publish$|Publish_NoReaders$|Publish_Direct$|PublishBatch$|PublishBatchFunc$|Reserve$)'
+echo '# collecting CPU profile from the core bench family (~1 min)...'
+go test -run '^$' -bench "$bench" -count=3 -cpuprofile="$tmp/core.pprof" . > /dev/null
+echo '# building baseline and PGO test binaries...'
+go test -c -pgo=off -o "$tmp/nopgo.test" .
+go test -c -pgo="$tmp/core.pprof" -o "$tmp/pgo.test" .
+echo '# 10 interleaved baseline/PGO rounds. Drift hits both arms, not one'
+i=1
+while [ "$i" -le 10 ]; do
+  "$tmp/nopgo.test" -test.run '^$' -test.bench "$bench" >> "$tmp/nopgo.txt"
+  "$tmp/pgo.test"   -test.run '^$' -test.bench "$bench" >> "$tmp/pgo.txt"
+  echo "round $i/10 done"
+  i=$((i + 1))
+done
+echo
+echo '# benchstat: baseline (-pgo=off) vs PGO'
+if command -v benchstat > /dev/null 2>&1; then
+  benchstat "$tmp/nopgo.txt" "$tmp/pgo.txt"
+else
+  go run golang.org/x/perf/cmd/benchstat@latest "$tmp/nopgo.txt" "$tmp/pgo.txt"
+fi
+"""
+
+[tasks."bench:multireader"]
+description = "Reproduce the PERFORMANCE.md multi-reader scaling table"
+run = "go test -run '^$' -bench 'BenchmarkRingBuffer_Publish_MultiReader$' -count=10 ."
+
+[tasks."bench:chanbaseline"]
+description = "Reproduce the PERFORMANCE.md channel fan-out baseline tables"
+run = "go test -run '^$' -bench '^BenchmarkChannel' -benchmem -count=10 ."
+
+[tasks."bench:pipeline"]
+description = "Reproduce the PERFORMANCE.md pipeline table"
+run = "go test -run '^$' -bench '^BenchmarkPipeline' -benchtime=1s -count=10 ."
+
+[tasks."bench:readview"]
+description = "Reproduce the PERFORMANCE.md ReadView table"
+run = "go test -run '^$' -bench 'BenchmarkReadView' -count=10 ."
+
+[tasks."bench:falsesharing"]
+description = "False-sharing families with forced 64-byte cache line"
+run = "go test -run '^$' -bench 'FalseSharing|BenchmarkBuffer_|BenchmarkDirectBuffer' -tags cache64 ."
+
+[tasks.vet]
+description = "go vet"
+run = "go vet ./..."
+
+[tasks.lint]
+description = "golangci-lint"
+run = "golangci-lint run"
