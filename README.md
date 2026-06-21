@@ -341,7 +341,9 @@ including how the picture changes at p99.9 and beyond, are in
 ### Other findings worth knowing
 
 - **Batching pays for itself by size 10.** The ~3.1 ns fixed cost per publish (gating check plus
-  cursor store) amortizes away; past size 10, per-item cost is mostly the payload write.
+  cursor store) amortizes away. On x86 the per-item cost is then flat at the payload-write floor; on
+  arm64 it dips into a mid-size hump before reaching its lowest at large batches (see
+  [Batch scaling](docs/PERFORMANCE.md#batch-scaling)).
 - **Reader scaling is sub-linear up to the hardware thread count**, then degrades as the writer's
   full cursor scan starts to dominate.
 - **`runtime.LockOSThread` does not pay.** Go's scheduler beats manual OS-thread pinning for this

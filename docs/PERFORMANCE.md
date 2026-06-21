@@ -70,23 +70,41 @@ slice of that:
 | [`Publish` by value, payload prepared once](../ring_buffer_bench_test.go#L183) |  5.49 |  5.46 | The honest by-value API cost                   |
 | [`Publish` by value, value built per event](../ring_buffer_bench_test.go#L224) |  9.18 |  8.46 | The original `Publish_Direct` shape            |
 
-> **arm64 caveat: the headline still holds, but for a different reason; the x86 mechanism does not.**
-> On the M4 Pro the `PublishFunc` full-fill row explodes to ~44 ns, 6× the 1-byte fill and 8× the
+> **arm64 caveat: the headline holds, but the mechanism does not.**
+> On the M4 Pro the `PublishFunc` full-fill row jumps to ~44 ns, 6× the 1-byte fill and 8× the
 > by-value `Publish` (5.46). Read naively that says "payload size is the gap on arm64." It isn't: as
 > [Batch scaling](#batch-scaling) shows, writing a whole 128 B slot *inline* (`Reserve_Fill`, 1.68
-> ns/item) is actually **faster** than writing 1 byte of it (4.24). The 44 ns is specifically the
-> **`PublishFunc` closure path**: a per-element callback fails to lower to coalesced full-line stores,
-> the same penalty `PublishBatchFunc_Fill` shows in the batch table (3.07 vs `Reserve_Fill`'s 1.68),
-> just un-amortized in the single-publish case. By-value and inline full writes don't pay it.
+> ns/item) is **faster** than writing 1 byte of it (4.24), so "payload size is not the gap" still holds.
 >
+> The 44 ns is a cold-line write stall, and it is narrower than it looks. It is not the callback, not
+> the byte count, and not the store-release barrier:
+>
+> - **Not the byte count.** Swapping `*slot = payload` for `copy(slot[:], payload[:])` in the *same*
+>   callback drops the row to ~4 ns. `copy` lowers to `memmove`'s full-line write; the struct
+>   assignment lowers to four partial vector stores whose first store into a cold 128 B line triggers a
+>   read-for-ownership that the full-line write skips.
+> - **Not the callback, not the barrier.** That same `*slot = payload`, run through `PublishBatchFunc`
+>   with a batch of one (one struct copy, one `writeCursor.Store`), costs ~6 ns, and ~3 ns/item in real
+>   batches (`PublishBatchFunc_Fill`). Same store, same per-event release store, no explosion. The
+>   difference is surrounding work: the `Reserve`/`Commit` bookkeeping gives the core independent
+>   instructions to overlap the cold-line write against. The tight single-publish loop has nothing to
+>   hide the stall behind, so it pays the full latency.
 > - **By-value `Publish` (5.46 ns) is the *fastest* of the four on arm64**, below even the 1-byte
 >   `PublishFunc`. Per-event construction (`Constructed` 8.46 vs `Prepared` 5.46) still costs, but
 >   less than x86's (1.55× vs 1.67×).
 >
-> What does *not* transfer is the **x86 store-to-load-forwarding mechanism** below: the M4's gap is a
-> closure codegen effect, not a construction stall. The portable guidance is the same on both
-> architectures (prefer by-value `Publish` of a *prepared* value, or an inline `Reserve` fill), with
-> one arm64-specific addition: avoid the per-element **closure** fill for cache-line-sized payloads.
+> The instruction shape is not the divergence. The struct copy compiles to the same algorithm on both
+> machines: four vector load/store pairs through one reused register, in 16 B units on x86 (`MOVUPS`,
+> 64 B line) and 32 B units on arm64 (`FLDPQ`/`FSTPQ`, 128 B line). The release store is if anything
+> heavier on x86 (`XCHGQ`, a full barrier) than on arm64 (`STLR`, a one-way release). x86 runs the
+> whole family flat at ~6 ns regardless of fill; the M4 stalls only in the tight struct-copy loop,
+> where the larger line and the un-hidden read-for-ownership combine. So the x86 store-to-load-forwarding
+> mechanism below does not transfer, and neither does the arm64 stall.
+>
+> **arm64 guidance.** For cache-line-sized payloads in a hot single-publish loop, avoid
+> `*slot = payload`. Use `copy` into the slot, batch with `Reserve`/`Commit` or `PublishBatchFunc`, or
+> `Publish` a prepared value by value. Any of the three lands at ~4 to 6 ns, and all are neutral or
+> faster on x86, so no architecture-specific code path is needed.
 
 Three findings (**x86-64**; see the caveat above for how arm64 diverges):
 
@@ -304,8 +322,10 @@ what makes the RFO story below provable rather than asserted.
 **Practical guidance:** on arm64, `Reserve` + an in-place full-slot fill (or `PublishBatch` with a
 prepared payload) hits the ~1.7 ns/item floor; dabbing a few bytes into each large cold slot, or
 filling via a per-element callback, leaves 1.5–2.5× on the table. On x86 fill shape is free, so
-optimize for ergonomics. The size-100 bump is present across *every* variant above, so it is a
-working-set/stride artifact (~12.8 KB/batch), not an API property.
+optimize for ergonomics. The mid-size hump (per-item cost rises into a broad peak through the medium
+batch sizes, then falls to its lowest at size 1000) appears only in the full-slot-fill columns, not
+the 1-byte ones, and it survives with no reader attached. It is a write-path memory effect, not an API
+property and not reader contention. See [Is the growth linear?](#is-the-growth-linear) for the shape.
 
 > **None of this is about GC.** The ring is a pre-allocated `buffer []T` and `Reserve`/`PublishFunc`
 > return views (`*T` / `[]T`) into it, so every fill above (including `seg[j] = payload` in
@@ -333,13 +353,20 @@ For total batch latency, **yes, approximately** once batches are no longer tiny.
 
 | Benchmark          | 10→100 total-time ratio | 100→1000 total-time ratio | Interpretation                                           |
 |--------------------|------------------------:|--------------------------:|----------------------------------------------------------|
-| `PublishBatch`     |                  18.6x  |                     3.6x  | Distorted by the size-100 bump; a cache/stride artifact, not superlinear growth |
-| `PublishBatchFunc` |                  6.16x  |                     8.32x | Close to linear                                          |
-| `Reserve`          |                  8.97x  |                     8.65x | Close to linear                                          |
+| `PublishBatch`     |                  18.6x  |                     3.6x  | Straddles the mid-size fill hump (see below), not superlinear growth |
+| `PublishBatchFunc` |                  6.16x  |                     8.32x | Close to linear (1-byte fill, no hump)                  |
+| `Reserve`          |                  8.97x  |                     8.65x | Close to linear (1-byte fill, no hump)                  |
 
-The arm64 `PublishBatch` ratios look erratic only because of the one-off size-100 bump: its
-size-1000 per-item cost (1.76 ns) is the lowest of any path on either machine, so treat the M4's
-medium-batch (≈100-item) `PublishBatch` cost as locally noisy rather than as runaway growth.
+The arm64 `PublishBatch` ratios look erratic only because its per-item cost crosses a reproducible
+mid-size hump: cheap at size 10, a broad peak through the medium batch sizes (around 5 ns/item with a
+reader, higher without one), then a fall to its size-1000 floor (~1.8 ns/item, among the lowest of any
+path). Total time straddling that hump makes 10→100 read superlinear and 100→1000 read sublinear, but
+nothing actually grows superlinearly. The hump is reader-independent (present, and larger, with no
+reader attached), so it is a write-path effect rather than producer/consumer contention, and it tracks
+full-slot writes specifically: the 1-byte paths in this table stay near-linear. The likely cause is
+medium-length runs of cold-line writes issuing more outstanding line fills than the core can overlap,
+before the streaming path engages at large batches. Treat it as a systematic dip-and-recover, not as
+noise or runaway growth.
 
 The more useful signal is the **per-item** cost:
 
