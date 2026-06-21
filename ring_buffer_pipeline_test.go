@@ -10,7 +10,7 @@ import (
 
 // spinReader advances the cursor to the writer barrier on every iteration without
 // reading individual events. Used in pipeline tests where readers must keep up
-// without sleeping. Do not use as a template for readers that call rv.Get — the
+// without sleeping. Do not use as a template for readers that call rv.Get; the
 // bulk-advance skips per-sequence processing.
 func spinReader(ctx context.Context, rv ReadView[int], cur *atomic.Int64) {
 	for {
@@ -90,7 +90,7 @@ func TestPipeline_2Stage_Stage2BlockedByStage1(t *testing.T) {
 		rb.Publish(i)
 	}
 
-	// Give stage 2 time to spin — it must see nothing while stage 1 is at 0.
+	// Give stage 2 time to spin; it must see nothing while stage 1 is at 0.
 	time.Sleep(20 * time.Millisecond)
 	if got := s2MaxSeen.Load(); got != 0 {
 		t.Fatalf("stage 2 advanced to %d while stage 1 was blocked at 0", got)
@@ -167,7 +167,7 @@ func TestPipeline_WriterBackpressure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Publish 7 events synchronously — these fit in the buffer while stage 1 is at 0.
+	// Publish 7 events synchronously; these fit in the buffer while stage 1 is at 0.
 	for i := range 7 {
 		rb.Publish(i)
 	}
@@ -198,7 +198,7 @@ func TestPipeline_WriterBackpressure(t *testing.T) {
 }
 
 // TestPipeline_EmptyStagePassthrough verifies that a stage with no readers does not
-// deadlock — its barrier propagates the upstream position unchanged.
+// deadlock; its barrier propagates the upstream position unchanged.
 func TestPipeline_EmptyStagePassthrough(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

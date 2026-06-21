@@ -21,8 +21,8 @@ func (r *RingBuffer[T]) initPool(upstream WriterBarrier) *BitmapReaderPool[T] {
 }
 
 // Stage is a named pipeline stage. Each stage owns a BitmapReaderPool and exposes:
-//   - Barrier() — a concurrent-safe WriterBarrier for wiring a downstream stage
-//   - Load()    — the cached WriterBarrier the writer uses for gating (single-threaded)
+//   - Barrier(): a concurrent-safe WriterBarrier for wiring a downstream stage
+//   - Load(): the cached WriterBarrier the writer uses for gating (single-threaded)
 type Stage[T any] struct {
 	pool *BitmapReaderPool[T]
 }
@@ -33,7 +33,7 @@ func (s *Stage[T]) Shutdown()                               { s.pool.Shutdown() 
 
 // Barrier returns a concurrent-safe, stateless WriterBarrier over this stage's
 // minimum cursor. Pass this to rb.NewStage() as the upstream argument when wiring
-// a downstream stage. Never pass to SetGatingStage — that path requires the cached
+// a downstream stage. Never pass to SetGatingStage; that path requires the cached
 // Load() for performance.
 func (s *Stage[T]) Barrier() WriterBarrier { return &poolBarrier[T]{pool: s.pool} }
 

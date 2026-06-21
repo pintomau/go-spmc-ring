@@ -2,7 +2,7 @@ name: Lint
 
 on:
   pull_request:
-    branches: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened]
 
 concurrency:
   # github.workflow: this workflow type
@@ -16,7 +16,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v6
         with:

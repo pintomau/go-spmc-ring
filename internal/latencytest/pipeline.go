@@ -128,16 +128,15 @@ func RunPipeline(s PipelineScenario) PipelineResult {
 	}
 }
 
-// makePipelineBatchReaderFn returns a ReaderFunc that uses GetRange for batch
-// reads, mirroring makeBatchConsumerFn but additionally writing per-slot
-// timestamps into tsArray for inter-stage latency measurement.
+// makePipelineBatchReaderFn returns a ReaderFunc that uses GetSegments for
+// batch reads, mirroring makeBatchConsumerFn but additionally writing
+// per-slot timestamps into tsArray for inter-stage latency measurement.
 func makePipelineBatchReaderFn(
 	tsArray []atomic.Int64,
 	bufCap int64,
 	rec *LatencyRecorder,
 ) ringring.ReaderFunc[Payload] {
 	return func(ctx context.Context, rv ringring.ReadView[Payload], cur *atomic.Int64) {
-		mask := rv.GetMask()
 		expected := cur.Load() + 1
 		for {
 			select {
@@ -146,16 +145,25 @@ func makePipelineBatchReaderFn(
 			default:
 				w := rv.LoadWriterBarrier()
 				if expected > w {
-					// spin only — no Gosched or Sleep backoff
+					// spin only, no Gosched or Sleep backoff
 					continue
 				}
-				batch := rv.GetRange(expected&mask, w&mask)
+				seg1, seg2 := rv.GetSegments(expected, w)
 				now := time.Now().UnixNano()
-				for i := range batch {
-					tsArray[(expected+int64(i))&(bufCap-1)].Store(now)
+				seq := expected
+				for i := range seg1 {
+					tsArray[seq&(bufCap-1)].Store(now)
 					if rec != nil {
-						rec.RecordConsume(batch[i], now)
+						rec.RecordConsume(seg1[i], now)
 					}
+					seq++
+				}
+				for i := range seg2 {
+					tsArray[seq&(bufCap-1)].Store(now)
+					if rec != nil {
+						rec.RecordConsume(seg2[i], now)
+					}
+					seq++
 				}
 				cur.Store(w)
 				expected = w + 1

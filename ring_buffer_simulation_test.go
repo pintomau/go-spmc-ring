@@ -16,6 +16,8 @@ const (
 	batchWriteMethodPublishBatch     batchWriteMethod = "publish_batch"
 	batchWriteMethodPublishBatchFunc batchWriteMethod = "publish_batch_func"
 	batchWriteMethodReserveCommit    batchWriteMethod = "reserve_commit"
+	batchWriteMethodTryPublish       batchWriteMethod = "try_publish"
+	batchWriteMethodTryReserveCommit batchWriteMethod = "try_reserve_commit"
 )
 
 // Data flow:
@@ -162,6 +164,8 @@ func TestRingBuffer_BatchSimulation(t *testing.T) {
 				batchWriteMethodPublishBatch,
 				batchWriteMethodPublishBatchFunc,
 				batchWriteMethodReserveCommit,
+				batchWriteMethodTryPublish,
+				batchWriteMethodTryReserveCommit,
 			}),
 			writerPatternLen,
 			writerPatternLen,
@@ -179,6 +183,7 @@ func TestRingBuffer_BatchSimulation(t *testing.T) {
 			var wg sync.WaitGroup
 			var activeReaders atomic.Int32
 			var corruptionDetected atomic.Int32
+			var tryFalseViolation atomic.Int32
 			slotIDs := make([]int, 0, numReaders)
 
 			defer func() {
@@ -230,6 +235,43 @@ func TestRingBuffer_BatchSimulation(t *testing.T) {
 								next++
 							}
 							rbuf.Commit(claim)
+						case batchWriteMethodTryPublish:
+							for i := int64(0); i < batchSize; {
+								if rbuf.TryPublish(int(firstSeq + i)) {
+									i++
+									continue
+								}
+								// TryPublish just refreshed cachedSlowestReader, and this
+								// goroutine is the only writer, so a false return must
+								// mean the ring is genuinely full right now.
+								if seq+i+1 < rbuf.cachedSlowestReader+rbuf.bufferSize {
+									tryFalseViolation.Store(1)
+									return
+								}
+								time.Sleep(time.Millisecond)
+							}
+						case batchWriteMethodTryReserveCommit:
+							for {
+								seg1, seg2, claim, ok := rbuf.TryReserve(batchSize)
+								if ok {
+									next := firstSeq
+									for i := range seg1 {
+										seg1[i] = int(next)
+										next++
+									}
+									for i := range seg2 {
+										seg2[i] = int(next)
+										next++
+									}
+									rbuf.Commit(claim)
+									break
+								}
+								if seq+batchSize < rbuf.cachedSlowestReader+rbuf.bufferSize {
+									tryFalseViolation.Store(1)
+									return
+								}
+								time.Sleep(time.Millisecond)
+							}
 						default:
 							panic("unknown batch writer method")
 						}
@@ -280,6 +322,10 @@ func TestRingBuffer_BatchSimulation(t *testing.T) {
 
 				if corruptionDetected.Load() != 0 {
 					rt.Fatalf("batch payload corruption detected")
+				}
+
+				if tryFalseViolation.Load() != 0 {
+					rt.Fatalf("try variant returned false while the ring had free capacity")
 				}
 
 				minVal := rbuf.barrier.Load()

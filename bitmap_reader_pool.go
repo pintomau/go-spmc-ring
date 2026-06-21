@@ -512,35 +512,44 @@ func (r *ReadView[T]) Get(seq int64) *T {
 	return &r.buffer[seq&r.mask]
 }
 
-func (r *ReadView[T]) GetRange(start, end int64) []T {
-	if start <= end {
-		// contiguous segment
-		return r.buffer[start : end+1]
+// GetSegments returns zero-copy views of the backing buffer spanning
+// sequences start..end inclusive. seg2 is non-nil only when the range wraps
+// the ring end. Sequences are absolute, as accepted by Get; masking is
+// internal. The caller must consume both segments before advancing its
+// cursor and must not retain them afterward.
+//
+// Contract (not validated for max performance): start <= end,
+// end-start < bufferSize, and end at or below the barrier the reader
+// observed. The gating protocol guarantees any range inside
+// [cursor+1, LoadWriterBarrier()] satisfies all three.
+func (r *ReadView[T]) GetSegments(start, end int64) (seg1, seg2 []T) {
+	s, e := start&r.mask, end&r.mask
+	if s <= e {
+		return r.buffer[s : e+1], nil
 	}
-
-	result := make([]T, 0, (len(r.buffer)-int(start))+(int(end)+1))
-	result = append(result, r.buffer[start:]...)
-	result = append(result, r.buffer[:end+1]...)
-	return result
+	return r.buffer[s:], r.buffer[:e+1]
 }
 
+// Iterate yields pointers to sequences start..end inclusive, in order.
+// Sequences are absolute, as accepted by Get and GetSegments. Implemented
+// over GetSegments; when the compiler inlines the loop body it measures at
+// parity with looping the segments directly (docs/PERFORMANCE.md, batch
+// read paths). Prefer GetSegments when the slices themselves are needed,
+// for bulk copies or vector processing.
 func (r *ReadView[T]) Iterate(start, end int64) iter.Seq[*T] {
 	return func(yield func(*T) bool) {
-		if start == end {
-			yield(r.Get(start))
-			return
+		seg1, seg2 := r.GetSegments(start, end)
+		for i := range seg1 {
+			if !yield(&seg1[i]) {
+				return
+			}
 		}
-
-		for maskedStart := start & r.mask; maskedStart != end; maskedStart = (maskedStart + 1) & r.mask {
-			if !yield(&r.buffer[maskedStart]) {
-				break
+		for i := range seg2 {
+			if !yield(&seg2[i]) {
+				return
 			}
 		}
 	}
-}
-
-func (r *ReadView[T]) GetMask() int64 {
-	return r.mask
 }
 
 func (r *ReadView[T]) LoadWriterBarrier() int64 {

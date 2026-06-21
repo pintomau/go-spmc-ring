@@ -5,14 +5,17 @@
 //   - Lock-free reader lifecycle management via CAS bitmap
 //   - Configurable wait strategies (Spin, Yield, Sleep, Hybrid)
 //   - Batch publish primitives (Reserve/Commit, PublishBatch)
+//   - Non-blocking variants (TryPublish, TryReserve) and a Remaining capacity signal
 //   - Pipeline staging (Stage, SetGatingStage)
 //   - False-sharing elimination through cache-line padding
 //
 // Quick start:
 //
 //	rbuf, _ := ringring.NewRingBuffer[int](ctx, 1024)
-//	slotID, _ := rbuf.Barrier().AddReader(func(ctx context.Context, rv ringring.ReadView[int], cur *atomic.Int64) {
-//	    // read loop
+//	stage := rbuf.NewStage(nil) // gated by the writer cursor
+//	rbuf.SetGatingStage(stage)  // writer waits for this stage's slowest reader
+//	slotID, _ := stage.AddReader(func(ctx context.Context, rv ringring.ReadView[int], cur *atomic.Int64) {
+//	    // read loop; see ExampleRingBuffer
 //	})
 //	rbuf.Publish(42)
 package ringring

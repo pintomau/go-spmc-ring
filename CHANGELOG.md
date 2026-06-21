@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] — 2025-05-10
+### Added
+- Non-blocking publish variants: `TryPublish`, `TryPublishFunc`, `TryReserve`
+- `Remaining` capacity signal for producer-side adaptation
+- Self-evicting reader example: returning from a `ReaderFunc` leaves the pool
+
+### Changed
+- Simulation replay now uses rapid failfiles (`testdata/rapid/`) and the
+  `RAPID_SEED` environment variable; the `-rbSeed` flag from 0.1.0 no longer exists
+
+## [0.1.0] - 2026-05-10
 
 ### Added
 - Initial public release of `ringring`

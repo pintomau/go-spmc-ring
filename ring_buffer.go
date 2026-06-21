@@ -151,14 +151,65 @@ func (r *RingBuffer[T]) PublishFunc(f func(*T)) {
 	r.nextSequence = nextSequence
 }
 
+// TryPublish attempts to publish without blocking. It returns false when the
+// ring is full, after refreshing the gating barrier once. Like Publish, it
+// must only be called from the writer goroutine.
+func (r *RingBuffer[T]) TryPublish(payload T) bool {
+	nextSequence := r.nextSequence + 1
+	if nextSequence >= r.cachedSlowestReader+r.bufferSize {
+		// one refresh, then give up instead of waiting
+		r.cachedSlowestReader = r.gatingBarrier.Load()
+		if nextSequence >= r.cachedSlowestReader+r.bufferSize {
+			return false
+		}
+	}
+	r.buffer[nextSequence&r.mask] = payload
+	r.writeCursor.Store(nextSequence)
+	r.nextSequence = nextSequence
+	return true
+}
+
+// TryPublishFunc is the non-blocking sibling of PublishFunc. It returns false
+// when the ring is full, in which case f is not called. Like PublishFunc, it
+// must only be called from the writer goroutine.
+func (r *RingBuffer[T]) TryPublishFunc(f func(*T)) bool {
+	nextSequence := r.nextSequence + 1
+	if nextSequence >= r.cachedSlowestReader+r.bufferSize {
+		// one refresh, then give up instead of waiting
+		r.cachedSlowestReader = r.gatingBarrier.Load()
+		if nextSequence >= r.cachedSlowestReader+r.bufferSize {
+			return false
+		}
+	}
+	f(&r.buffer[nextSequence&r.mask])
+	r.writeCursor.Store(nextSequence)
+	r.nextSequence = nextSequence
+	return true
+}
+
+// segments returns the backing-buffer slices spanning sequences
+// firstSeq..firstSeq+n-1. seg2 is non-nil only when the range wraps the ring
+// end. Callers must have already established that the range is claimable.
+func (r *RingBuffer[T]) segments(firstSeq, n int64) (seg1, seg2 []T) {
+	start := firstSeq & r.mask
+	end := start + n
+	if end <= r.bufferSize {
+		return r.buffer[start:end], nil
+	}
+	seg1 = r.buffer[start:r.bufferSize]
+	seg2 = r.buffer[0 : n-int64(len(seg1))]
+	return seg1, seg2
+}
+
 // Reserve blocks until n contiguous sequence numbers are available and returns
 // up to two slices into the backing buffer spanning those slots. seg2 is non-nil
 // only when the reservation wraps the end of the ring. The caller must fill every
 // slot in both segments and then pass the returned claim to Commit exactly once,
 // in publish order. n must satisfy 0 < n < bufferSize.
 //
-// Callers compiled with GOEXPERIMENT=simd may fill seg1 and seg2 using the simd
-// package's aligned loads/stores; each segment is contiguous in memory.
+// Each segment is contiguous in memory, so callers may fill them with bulk
+// techniques such as the GOEXPERIMENT=simd package's vector stores. No
+// alignment beyond the element type's natural alignment is guaranteed.
 func (r *RingBuffer[T]) Reserve(n int64) (seg1, seg2 []T, claim int64) {
 	if n <= 0 || n >= r.bufferSize {
 		panic("ringring: Reserve n out of range (must satisfy 0 < n < bufferSize)")
@@ -176,14 +227,7 @@ func (r *RingBuffer[T]) Reserve(n int64) (seg1, seg2 []T, claim int64) {
 		}
 	}
 
-	start := firstSeq & r.mask
-	end := start + n
-	if end <= r.bufferSize {
-		seg1 = r.buffer[start:end]
-		return seg1, nil, lastSeq
-	}
-	seg1 = r.buffer[start:r.bufferSize]
-	seg2 = r.buffer[0 : n-int64(len(seg1))]
+	seg1, seg2 = r.segments(firstSeq, n)
 	return seg1, seg2, lastSeq
 }
 
@@ -194,6 +238,40 @@ func (r *RingBuffer[T]) Reserve(n int64) (seg1, seg2 []T, claim int64) {
 func (r *RingBuffer[T]) Commit(claim int64) {
 	r.writeCursor.Store(claim)
 	r.nextSequence = claim
+}
+
+// TryReserve is the non-blocking sibling of Reserve. When n contiguous slots
+// are free it behaves exactly like Reserve and returns ok = true; the caller
+// must then pass claim to Commit exactly once, in publish order. When the ring
+// lacks room for the whole batch it returns ok = false (after refreshing the
+// gating barrier once) and no claim is made. Panics if n is out of range,
+// matching Reserve. Must only be called from the writer goroutine.
+func (r *RingBuffer[T]) TryReserve(n int64) (seg1, seg2 []T, claim int64, ok bool) {
+	if n <= 0 || n >= r.bufferSize {
+		panic("ringring: TryReserve n out of range (must satisfy 0 < n < bufferSize)")
+	}
+	lastSeq := r.nextSequence + n
+	if lastSeq >= r.cachedSlowestReader+r.bufferSize {
+		// one refresh, then give up instead of waiting
+		r.cachedSlowestReader = r.gatingBarrier.Load()
+		if lastSeq >= r.cachedSlowestReader+r.bufferSize {
+			return nil, nil, 0, false
+		}
+	}
+	seg1, seg2 = r.segments(r.nextSequence+1, n)
+	return seg1, seg2, lastSeq, true
+}
+
+// Remaining reports how many slots the writer can publish right now without
+// blocking. It refreshes the gating barrier, so it reports actual capacity
+// rather than the writer's cached view; the result is 0 exactly when
+// TryPublish would return false. The maximum value is bufferSize-1 (strict <
+// gating, consistent with Reserve's n < bufferSize rule). It does not account
+// for an uncommitted Reserve claim, so call it between Commit and the next
+// Reserve. Must only be called from the writer goroutine.
+func (r *RingBuffer[T]) Remaining() int64 {
+	r.cachedSlowestReader = r.gatingBarrier.Load()
+	return r.cachedSlowestReader + r.bufferSize - 1 - r.nextSequence
 }
 
 // PublishBatchFunc reserves n slots and invokes f for each in publish order,
