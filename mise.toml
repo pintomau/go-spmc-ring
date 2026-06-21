@@ -30,8 +30,8 @@ description = "Quick smoke over all benchmarks (~2 min)"
 run = "go test -run '^$' -bench=. -benchtime=100ms ."
 
 [tasks."bench:core"]
-description = "Reproduce the PERFORMANCE.md core publish table (long)"
-run = "go test -run '^$' -bench 'BenchmarkRingBuffer_(Publish$|Publish_NoReaders$|Publish_Direct$|PublishBatch$|PublishBatchFunc$|Reserve$)' -count=10 ."
+description = "Reproduce the PERFORMANCE.md core publish + batch-scaling tables, incl. the full-slot-fill variants (long)"
+run = "go test -run '^$' -bench 'BenchmarkRingBuffer_(Publish$|Publish_NoReaders$|Publish_Direct$|PublishBatch$|PublishBatchFunc$|PublishBatchFunc_Fill$|Reserve$|Reserve_Fill$)' -count=10 ."
 
 [tasks."bench:pgo"]
 description = "PGO A/B of the core publish table: fresh profile, interleaved baseline/PGO runs, benchstat summary (~8 min)"
@@ -61,10 +61,6 @@ else
   go run golang.org/x/perf/cmd/benchstat@latest "$tmp/nopgo.txt" "$tmp/pgo.txt"
 fi
 """
-
-[tasks."bench:fill"]
-description = "Full-slot-fill batch variants (equal byte-traffic with PublishBatch); see PERFORMANCE.md Batch scaling"
-run = "go test -run '^$' -bench 'BenchmarkRingBuffer_(Reserve_Fill|PublishBatchFunc_Fill)$' -count=10 ."
 
 [tasks."bench:multireader"]
 description = "Reproduce the PERFORMANCE.md multi-reader scaling table (long)"

@@ -294,7 +294,7 @@ in [Throughput vs latency](#throughput-vs-latency-choosing-spin-yield-and-sleep)
 
 ## Performance
 
-Headline numbers, arithmetic mean of 10 runs, on two machines — x86-64 (Ryzen 5 9600X, 6C/12T,
+Headline numbers, arithmetic mean of 10 runs, on two machines: x86-64 (Ryzen 5 9600X, 6C/12T,
 Linux) and arm64 (Apple M4 Pro, 14C/14T, macOS), both Go 1.26.2:
 
 | Measurement | x86-64 (Ryzen) | arm64 (M4 Pro) |
@@ -306,7 +306,7 @@ Linux) and arm64 (Apple M4 Pro, 14C/14T, macOS), both Go 1.26.2:
 | Pipeline depth (2–3 stages, ≤4 readers each) | within noise of single-stage | within noise of single-stage |
 | Best end-to-end p99 (burst workload) | 13.2µs (Yield wait, batch poll) | 9.0µs (Hybrid wait, batch poll) |
 
-Absolute numbers capture the whole platform (CPU, scheduler, OS timer), not just the CPU — see the
+Absolute numbers capture the whole platform (CPU, scheduler, OS timer), not just the CPU; see the
 [per-section commentary](docs/PERFORMANCE.md) for where the two architectures diverge in *shape*
 (notably the `Reserve` vs `PublishBatch` ordering, the multi-reader cliff position, and the FixedRate
 `Spin` vs `Batch` poll recommendation). The full data, including multi-reader scaling, the
