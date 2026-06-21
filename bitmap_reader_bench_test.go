@@ -16,7 +16,7 @@ func BenchmarkBitmapReaderPool_Load(b *testing.B) {
 	setupPool := func(n int) *BitmapReaderPool[int] {
 		pool := NewBitmapReaderPool[int](ctx, writerCursor)
 		for i := 0; i < n; i++ {
-			pool.AddReader(func(ctx context.Context, readView ReadView[int], readerCursor *atomic.Int64) {
+			_, _ = pool.AddReader(func(ctx context.Context, readView ReadView[int], readerCursor *atomic.Int64) {
 				<-ctx.Done()
 			})
 		}
@@ -70,7 +70,7 @@ func BenchmarkBitmapReaderPool_Load(b *testing.B) {
 		pool := NewBitmapReaderPool[int](ctx, writerCursor)
 		// Fill half
 		for i := 0; i < 64; i++ {
-			pool.AddReader(func(ctx context.Context, readView ReadView[int], readerCursor *atomic.Int64) {
+			_, _ = pool.AddReader(func(ctx context.Context, readView ReadView[int], readerCursor *atomic.Int64) {
 				<-ctx.Done()
 			})
 		}
@@ -90,7 +90,7 @@ func BenchmarkBitmapReaderPool_Load(b *testing.B) {
 						<-ctx.Done()
 					})
 					if err == nil {
-						pool.RemoveReader(id)
+						_ = pool.RemoveReader(id)
 					}
 				}
 			}
@@ -130,7 +130,7 @@ func BenchmarkBitmapReaderPool_Load(b *testing.B) {
 							<-ctx.Done()
 						})
 						if err == nil {
-							pool.RemoveReader(id)
+							_ = pool.RemoveReader(id)
 							continue
 						}
 						readers[id] = struct{}{}
@@ -149,7 +149,7 @@ func BenchmarkBitmapReaderPool_Load(b *testing.B) {
 							n--
 						}
 
-						pool.RemoveReader(toRemove)
+						_ = pool.RemoveReader(toRemove)
 						delete(readers, toRemove)
 					}
 				}
@@ -206,8 +206,8 @@ func BenchmarkFalseSharing_Readers(b *testing.B) {
 	})
 
 	// Cleanup
-	pool.RemoveReader(id1)
-	pool.RemoveReader(id2)
+	_ = pool.RemoveReader(id1)
+	_ = pool.RemoveReader(id2)
 }
 
 // paddedPair deliberately creates a non-false sharing for comparison

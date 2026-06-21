@@ -7,6 +7,7 @@ import (
 	"time"
 
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
+
 	"github.com/pintomau/ringring"
 )
 

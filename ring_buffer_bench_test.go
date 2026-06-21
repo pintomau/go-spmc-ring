@@ -31,7 +31,7 @@ func BenchmarkRingBuffer_Publish(b *testing.B) {
 	}
 
 	// Add a reader that keeps up
-	rb.barrier.AddReader(func(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
+	_, _ = rb.barrier.AddReader(func(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
 		current := readerCursor.Load()
 		for {
 			select {
@@ -77,7 +77,7 @@ func BenchmarkRingBuffer_TryPublish(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	rb.barrier.AddReader(keepUpReader)
+	_, _ = rb.barrier.AddReader(keepUpReader)
 
 	for b.Loop() {
 		for !rb.TryPublishFunc(produce) {
@@ -138,7 +138,7 @@ func BenchmarkRingBuffer_Publish_Direct(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	rb.barrier.AddReader(func(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
+	_, _ = rb.barrier.AddReader(func(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
 		current := readerCursor.Load()
 		for {
 			select {
@@ -189,7 +189,7 @@ func BenchmarkRingBuffer_DirectGap_Publish_Prepared(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	rb.barrier.AddReader(keepUpReader)
+	_, _ = rb.barrier.AddReader(keepUpReader)
 
 	var payload object
 	payload.x[0] = '0'
@@ -209,7 +209,7 @@ func BenchmarkRingBuffer_DirectGap_PublishFunc_FullFill(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	rb.barrier.AddReader(keepUpReader)
+	_, _ = rb.barrier.AddReader(keepUpReader)
 
 	var payload object
 	payload.x[0] = '0'
@@ -230,7 +230,7 @@ func BenchmarkRingBuffer_DirectGap_Publish_Constructed(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	rb.barrier.AddReader(keepUpReader)
+	_, _ = rb.barrier.AddReader(keepUpReader)
 
 	for b.Loop() {
 		obj := object{}
@@ -250,7 +250,7 @@ func BenchmarkRingBuffer_DirectGap_PublishFunc_OneByte(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	rb.barrier.AddReader(keepUpReader)
+	_, _ = rb.barrier.AddReader(keepUpReader)
 
 	for b.Loop() {
 		rb.PublishFunc(produce)
@@ -268,7 +268,7 @@ func BenchmarkRingBuffer_Publish_BatchReader(b *testing.B) {
 	}
 
 	// Batch reader: process contiguous segments
-	rb.barrier.AddReader(func(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
+	_, _ = rb.barrier.AddReader(func(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
 		current := readerCursor.Load()
 		for {
 			select {
@@ -313,7 +313,7 @@ func BenchmarkRingBuffer_Publish_IteratorReader(b *testing.B) {
 	}
 
 	// Iterator reader: range over each available batch
-	rb.barrier.AddReader(func(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
+	_, _ = rb.barrier.AddReader(func(ctx context.Context, readView ReadView[object], readerCursor *atomic.Int64) {
 		current := readerCursor.Load()
 		for {
 			select {
@@ -384,7 +384,7 @@ func BenchmarkRingBuffer_PublishBatch(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			rb.barrier.AddReader(keepUpReader)
+			_, _ = rb.barrier.AddReader(keepUpReader)
 
 			payload := make([]object, size)
 			for i := range payload {
@@ -412,7 +412,7 @@ func BenchmarkRingBuffer_PublishBatchFunc(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			rb.barrier.AddReader(keepUpReader)
+			_, _ = rb.barrier.AddReader(keepUpReader)
 
 			fill := func(i int64, slot *object) { slot.x[0] = '0' }
 
@@ -437,7 +437,7 @@ func BenchmarkRingBuffer_Reserve(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			rb.barrier.AddReader(keepUpReader)
+			_, _ = rb.barrier.AddReader(keepUpReader)
 
 			b.ResetTimer()
 			for b.Loop() {
@@ -473,7 +473,7 @@ func BenchmarkRingBuffer_Reserve_Fill(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			rb.barrier.AddReader(keepUpReader)
+			_, _ = rb.barrier.AddReader(keepUpReader)
 
 			var payload object
 			payload.x[0] = '0'
@@ -508,7 +508,7 @@ func BenchmarkRingBuffer_PublishBatchFunc_Fill(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			rb.barrier.AddReader(keepUpReader)
+			_, _ = rb.barrier.AddReader(keepUpReader)
 
 			var payload object
 			payload.x[0] = '0'

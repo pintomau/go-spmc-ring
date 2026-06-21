@@ -61,7 +61,7 @@ func ExampleRingBuffer() {
 	}
 
 	// Clean up.
-	s.RemoveReader(slotID)
+	_ = s.RemoveReader(slotID)
 	s.Shutdown()
 
 	// Output:

@@ -57,9 +57,9 @@ func (r Result) LogPercentileTable(t *testing.T) {
 }
 
 type percentileRow struct {
-	name                        string
+	name                       string
 	p50, p95, p99, p999, p9999 int64
-	max                         int64
+	max                        int64
 }
 
 func (r Result) rows() []percentileRow {
