@@ -1,0 +1,15 @@
+# IDE
+.idea/
+.vscode/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Go build artifacts
+*.exe
+*.test
+*.out
+
+# goreleaser output
+dist/

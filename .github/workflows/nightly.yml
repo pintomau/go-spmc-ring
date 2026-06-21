@@ -1,0 +1,103 @@
+name: Nightly thorough simulation
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 02:00 UTC nightly
+  workflow_dispatch:        # manual trigger (e.g. before a release)
+    inputs:
+      checks:
+        description: 'Override RAPID_CHECKS for every test (empty = per-test defaults)'
+        default: ''
+        required: false
+
+jobs:
+  build-and-vet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - name: go build
+        run: go build ./...
+      - name: go build (cache128)
+        run: go build -tags cache128 ./...
+
+  simulation:
+    needs: build-and-vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Per-case cost differs by ~190x across properties, so each test gets
+        # its own check budget, sized to roughly 30-40 runner minutes
+        # (measured 2026-06-12: 1.6 s/case, 190 ms/case, 120 ms/case, 8.5 ms/case).
+        include:
+          - test: TestRingBuffer_Simulation
+            checks: '500'
+          - test: TestBitmapReaderPool_Simulation
+            checks: '5000'
+          - test: TestPipeline_Simulation
+            checks: '5000'
+          - test: TestRingBuffer_BatchSimulation
+            checks: '50000'
+    env:
+      RAPID_CHECKS: ${{ github.event.inputs.checks || matrix.checks }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # Single source of truth: read the pinned Go version out of mise.toml
+      # (Python 3.11+ ships tomllib in the stdlib; ubuntu-latest has it).
+      - name: Read Go version from mise.toml
+        id: tools
+        run: |
+          go=$(python3 -c "import tomllib;print(tomllib.load(open('mise.toml','rb'))['tools']['go'])")
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ steps.tools.outputs.go }}
+          cache: true
+
+      - name: Run simulation test
+        run: go test -v -run '^${{ matrix.test }}$' -timeout 55m .
+
+      - name: Upload rapid failfiles
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapid-failfiles-${{ matrix.test }}
+          path: testdata/rapid/
+          if-no-files-found: ignore
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Single source of truth: read the pinned Go version out of mise.toml
+      # (Python 3.11+ ships tomllib in the stdlib; ubuntu-latest has it).
+      - name: Read Go version from mise.toml
+        id: tools
+        run: |
+          go=$(python3 -c "import tomllib;print(tomllib.load(open('mise.toml','rb'))['tools']['go'])")
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ steps.tools.outputs.go }}
+          cache: true
+
+      - name: Run core benchmarks
+        run: |
+          go test -run '^$' -bench=. -benchtime=100ms -count=3 -benchmem 2>&1 | tee benchmark-output.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-benchmark-results
+          path: benchmark-output.txt
