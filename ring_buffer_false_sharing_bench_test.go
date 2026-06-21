@@ -52,7 +52,7 @@ func benchmarkBufferFalseSharing[T any](b *testing.B, newEvent func(*T), readerL
 	// Add a reader that lags behind writer by readerLag positions
 	readerDone := make(chan struct{})
 	readerStarted := make(chan struct{})
-	rb.barrier.AddReader(func(ctx context.Context, readView ReadView[T], readerCursor *atomic.Int64) {
+	_, _ = rb.barrier.AddReader(func(ctx context.Context, readView ReadView[T], readerCursor *atomic.Int64) {
 		defer close(readerDone)
 		close(readerStarted)
 		for {
@@ -166,7 +166,7 @@ func BenchmarkBuffer_MultiReader_SmallElement(b *testing.B) {
 		readerLag := lag
 		readerDone := done[i]
 
-		rb.barrier.AddReader(func(ctx context.Context, readView ReadView[SmallEvent], readerCursor *atomic.Int64) {
+		_, _ = rb.barrier.AddReader(func(ctx context.Context, readView ReadView[SmallEvent], readerCursor *atomic.Int64) {
 			defer close(readerDone)
 			started.Done()
 			for {

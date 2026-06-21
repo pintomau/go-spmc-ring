@@ -1,5 +1,6 @@
 [tools]
 go = "1.26"
+golangci-lint = "2.12"
 
 # Single entry point for every documented test/bench command.
 # CI intentionally uses raw go invocations; keep these and the workflows
@@ -83,5 +84,5 @@ description = "go vet"
 run = "go vet ./..."
 
 [tasks.lint]
-description = "golangci-lint (must be installed)"
+description = "golangci-lint (managed by mise)"
 run = "golangci-lint run"

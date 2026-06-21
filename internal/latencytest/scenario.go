@@ -16,7 +16,7 @@ type WorkloadShape interface {
 type FixedRate struct{ RateHz int }
 
 func (f FixedRate) run(ctx context.Context, rb *ringring.RingBuffer[Payload]) {
-	FixedRateProducer{RateHz: f.RateHz}.Run(ctx, rb)
+	FixedRateProducer(f).Run(ctx, rb)
 }
 
 // Burst fires BurstSize events immediately, idles IdleMs milliseconds, repeats.
@@ -26,7 +26,7 @@ type Burst struct {
 }
 
 func (b Burst) run(ctx context.Context, rb *ringring.RingBuffer[Payload]) {
-	BurstProducer{BurstSize: b.BurstSize, IdleMs: b.IdleMs}.Run(ctx, rb)
+	BurstProducer(b).Run(ctx, rb)
 }
 
 // BurstReserve is like Burst but uses Reserve+Commit: the entire batch becomes
@@ -37,7 +37,7 @@ type BurstReserve struct {
 }
 
 func (b BurstReserve) run(ctx context.Context, rb *ringring.RingBuffer[Payload]) {
-	BurstReserveProducer{BurstSize: b.BurstSize, IdleMs: b.IdleMs}.Run(ctx, rb)
+	BurstReserveProducer(b).Run(ctx, rb)
 }
 
 // Hetero scenario: one fast SpinReader + one slow reader with SleepPerEvent.

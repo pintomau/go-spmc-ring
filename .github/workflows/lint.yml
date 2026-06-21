@@ -18,15 +18,25 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Single source of truth: read the pinned tool versions out of mise.toml
+      # (Python 3.11+ ships tomllib in the stdlib; ubuntu-latest has it).
+      - name: Read tool versions from mise.toml
+        id: tools
+        run: |
+          go=$(python3 -c "import tomllib;print(tomllib.load(open('mise.toml','rb'))['tools']['go'])")
+          golangci=$(python3 -c "import tomllib;print(tomllib.load(open('mise.toml','rb'))['tools']['golangci-lint'])")
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "golangci=v$golangci" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          go-version: ${{ steps.tools.outputs.go }}
           cache: true
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: ${{ steps.tools.outputs.golangci }}
           args: --timeout=5m
 
       - name: go vet

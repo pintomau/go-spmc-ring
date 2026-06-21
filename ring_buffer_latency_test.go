@@ -132,8 +132,8 @@ func TestLatency_Pipeline_2Stage(t *testing.T) {
 		Stages:          2,
 		Duration:        10 * time.Second,
 	})
-	result.Result.AssertP99Under(t, 100*time.Millisecond)
-	result.Result.LogPercentileTable(t)
+	result.AssertP99Under(t, 100*time.Millisecond)
+	result.LogPercentileTable(t)
 	for i, h := range result.StageToStage {
 		t.Logf("stage %d→%d p99: %v", i, i+1, time.Duration(h.ValueAtQuantile(99)))
 	}
@@ -151,8 +151,8 @@ func TestLatency_Pipeline_3Stage(t *testing.T) {
 		Stages:          3,
 		Duration:        10 * time.Second,
 	})
-	result.Result.AssertP99Under(t, 200*time.Millisecond)
-	result.Result.LogPercentileTable(t)
+	result.AssertP99Under(t, 200*time.Millisecond)
+	result.LogPercentileTable(t)
 	for i, h := range result.StageToStage {
 		t.Logf("stage %d→%d p99: %v", i, i+1, time.Duration(h.ValueAtQuantile(99)))
 	}
@@ -170,8 +170,8 @@ func TestLatency_Pipeline_2Stage_MultiReader(t *testing.T) {
 		Stages:          2,
 		Duration:        10 * time.Second,
 	})
-	result.Result.AssertP99Under(t, 100*time.Millisecond)
-	result.Result.LogPercentileTable(t)
+	result.AssertP99Under(t, 100*time.Millisecond)
+	result.LogPercentileTable(t)
 	for i, h := range result.StageToStage {
 		t.Logf("stage %d→%d p99: %v", i, i+1, time.Duration(h.ValueAtQuantile(99)))
 	}

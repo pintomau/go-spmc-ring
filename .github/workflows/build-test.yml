@@ -59,6 +59,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.26'
         uses: codecov/codecov-action@v5
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.out
           fail_ci_if_error: false
 
@@ -73,9 +74,17 @@ jobs:
           # checkout the ref given by dispatch, or HEAD otherwise
           ref: ${{ inputs.refToBuild || '' }}
 
+      # Single source of truth: read the pinned Go version out of mise.toml
+      # (Python 3.11+ ships tomllib in the stdlib; ubuntu-latest has it).
+      - name: Read Go version from mise.toml
+        id: tools
+        run: |
+          go=$(python3 -c "import tomllib;print(tomllib.load(open('mise.toml','rb'))['tools']['go'])")
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          go-version: ${{ steps.tools.outputs.go }}
 
       - name: Run simulation tests (reduced checks)
         run: go test -run 'Simulation' -timeout 18m ./...
